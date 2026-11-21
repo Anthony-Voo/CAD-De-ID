@@ -4,3 +4,4 @@ pikepdf==10.18.2
 pyahocorasick==2.3.1
 py7zr==1.1.4
 wordfreq==3.1.1
+pypdfium2==5.13.0

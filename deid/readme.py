@@ -14,11 +14,21 @@ corpus/    de-identified files, same folder layout as the input, every file kept
 code/      complete pipeline source (deid/), requirements.txt, pipeline.sh
 README.txt this file
 
-HOW TO RUN
-----------
-  python3 -m pip install -r code/requirements.txt          (Python 3.13)
-  DEID_SECRET=<private key> bash code/pipeline.sh ./work
-  -> ./work/cleaned-corpus is uploaded as corpus/
+HOW TO RUN (reproduces this corpus exactly)
+-------------------------------------------
+  python3.13 -m venv .venv && . .venv/bin/activate
+  python3 -m pip install -r code/requirements.lock        # exact versions used
+  bash code/pipeline.sh ./work                            # -> ./work/cleaned-corpus
+
+  The pipeline is deterministic: pseudonyms are an HMAC of the normalized
+  identity under the key DEID_SECRET.  This attempt used the default key in
+  code/deid/pseudo.py, so the command above regenerates byte-identical files
+  (set DEID_SECRET to a private value for a fresh, unlinkable mapping).
+  pipeline.sh downloads the input from the Builders mirror, so it needs no
+  local copy; on a machine with less than ~150 GB free use
+  code/tools/drive2.sh, which processes, uploads and deletes ~30 GB chunks.
+  Private artefacts (registry.json identity list, pathmap.tsv, run logs) are
+  written to the work directory only and are not part of this submission.
 
 Steps (all in code/deid/):
   1. discover.py       streams every input file and harvests identity values:
