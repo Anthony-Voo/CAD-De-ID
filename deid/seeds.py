@@ -20,7 +20,8 @@ SOFTWARE = {
     "freecad", "solidworks", "autodesk", "inventor", "fusion360", "onshape", "catia", "creo", "siemens",
     "opencascade", "step", "iges", "parasolid", "acis", "spatial", "kicad", "openscad", "blender", "python",
     "github", "gitlab", "cad", "lego", "technic", "nema17", "astm", "iso", "din", "ansi", "steam", "cnc",
-    "ptc", "solidedge", "rhino", "sketchup", "dassault", "microsoft", "adobe", "google",
+    "ptc", "solidedge", "rhino", "sketchup", "dassault", "microsoft", "adobe", "google", "gimp", "inkscape",
+    "krita", "photoshop", "illustrator", "coreldraw", "libreoffice", "openoffice",
 }
 
 # Generic words that appear as repo names or path parts and must not be
