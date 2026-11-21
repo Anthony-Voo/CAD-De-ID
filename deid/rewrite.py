@@ -677,8 +677,10 @@ def transform(where: str, data: bytes, reg: Registry, depth=0):
         lreg, found = local_registry(reg, where, data) if len(data) < 300_000_000 and kind not in ("zip", "7z", "tar", "gz", "Z", "bz2", "xz") else (reg, [])
     try:
         if kind in ("text", "step", "iges"):
-            new = rw_text(data, lreg)
-            new = rw_step_fields(new, lreg) if kind == "step" else new
+            # STEP header fields first, on the original values (one pseudonym per
+            # identity), then the general pass for everything else
+            new = rw_step_fields(data, lreg) if kind == "step" else data
+            new = rw_text(new, lreg)
         elif kind == "ole":
             new = rw_ole(data, lreg, where, notes)
         elif kind == "sw3d":

@@ -75,6 +75,46 @@ def work(row):
             "md5in": hashlib.md5(data).hexdigest()}
 
 
+def stream_fallback(row, a, pm, reg, why):
+    """Low-memory path for a huge file whose worker died: fetch to disk, then
+    same-length replacement block by block (overlapping, so no match is cut)."""
+    import tempfile
+    path = row[0]
+    dst = os.path.join(a.out, pm[path])
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    tmp_in = dst + ".in~"
+    try:
+        if a.local:
+            src = os.path.join(a.local, path)
+        else:
+            from .discover import BASE
+            import subprocess
+            subprocess.run(["curl", "-fsS", "--retry", "5", "-o", tmp_in, f"{BASE}/{row[3]}"], check=True)
+            src = tmp_in
+        B, OV = 64 << 20, 4096
+        h = hashlib.md5()
+        with open(src, "rb") as fi, open(dst + ".part~", "wb") as fo:
+            prev = b""
+            while True:
+                blk = fi.read(B)
+                h.update(blk)
+                buf = prev + blk
+                if not blk:
+                    fo.write(prev)
+                    break
+                new = reg.replace(buf, "bin")[0]
+                # keep the tail for the next round so matches across blocks are seen
+                keep = min(OV, len(new)) if blk else 0
+                fo.write(new[:len(new) - keep])
+                prev = new[len(new) - keep:]
+        os.replace(dst + ".part~", dst)
+        return {"p": path, "np": pm[path], "n": int(row[1]), "m": os.path.getsize(dst), "chg": True,
+                "notes": [f"large-file-streamed:{why}"], "md5in": h.hexdigest()}
+    finally:
+        if os.path.exists(tmp_in):
+            os.unlink(tmp_in)
+
+
 def build_pathmap(rows, reg):
     pm = {}
     used = {}
@@ -142,33 +182,71 @@ def main():
             sel.append(r)
             tot += int(r[1])
         todo = sel
-    todo.sort(key=lambda r: int(r[1]) > 200_000_000)
-    print(f"{len(todo)} to do, {len(done)} done", flush=True)
+    big = [r for r in todo if int(r[1]) > 150_000_000]
+    small = [r for r in todo if int(r[1]) <= 150_000_000]
+    print(f"{len(todo)} to do ({len(big)} large), {len(done)} done", flush=True)
     t0 = time.time()
     nb = 0
-    with open(a.log, "a") as log, Pool(a.jobs, initializer=init, initargs=(a.registry, a.out, a.local, pm), maxtasksperchild=100) as pool:
-        for i, res in enumerate(pool.imap_unordered(work, todo, chunksize=2)):
-            log.write(json.dumps(res, ensure_ascii=False) + "\n")
-            if "err" not in res:
-                src = os.path.join(a.out, res["np"])
-                for f in followers.get(res["p"], []):
-                    dst = os.path.join(a.out, pm[f])
-                    os.makedirs(os.path.dirname(dst), exist_ok=True)
-                    if os.path.exists(dst):
-                        os.unlink(dst)
+
+    def record(log, res):
+        nonlocal nb
+        log.write(json.dumps(res, ensure_ascii=False) + "\n")
+        nb += res.get("n", 0) or 0
+        if "err" in res:
+            return
+        src = os.path.join(a.out, res["np"])
+        for f in followers.get(res["p"], []):
+            dst = os.path.join(a.out, pm[f])
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            if os.path.exists(dst):
+                os.unlink(dst)
+            try:
+                os.link(src, dst)
+            except OSError:
+                import shutil
+                shutil.copyfile(src, dst)
+            log.write(json.dumps({"p": f, "np": pm[f], "n": res.get("n"), "m": res.get("m"),
+                                  "chg": res.get("chg"), "notes": ["duplicate"], "dup_of": res["np"],
+                                  "md5in": res.get("md5in")}, ensure_ascii=False) + "\n")
+
+    from concurrent.futures import ProcessPoolExecutor, as_completed
+    from concurrent.futures.process import BrokenProcessPool
+    with open(a.log, "a") as log:
+        # small files: many workers.  A worker that dies (out of memory) breaks
+        # the executor instead of hanging; the remaining files are retried.
+        pending = list(small)
+        while pending:
+            retry = []
+            with ProcessPoolExecutor(a.jobs, initializer=init, initargs=(a.registry, a.out, a.local, pm),
+                                     max_tasks_per_child=100) as ex:
+                futs = {ex.submit(work, r): r for r in pending}
+                for i, f in enumerate(as_completed(futs)):
                     try:
-                        os.link(src, dst)
-                    except OSError:
-                        import shutil
-                        shutil.copyfile(src, dst)
-                    log.write(json.dumps({"p": f, "np": pm[f], "n": res.get("n"), "m": res.get("m"),
-                                          "chg": res.get("chg"), "notes": ["duplicate"], "dup_of": res["np"],
-                                          "md5in": res.get("md5in")}, ensure_ascii=False) + "\n")
-            nb += res.get("n", 0)
-            if i % 1000 == 0:
-                log.flush()
-                dt = time.time() - t0
-                print(f"{i}/{len(todo)} {nb/1e9:.1f} GB {nb/1e6/max(dt,1):.1f} MB/s {dt/60:.1f} min", flush=True)
+                        record(log, f.result())
+                    except BrokenProcessPool:
+                        retry.append(futs[f])
+                    except Exception as e:
+                        record(log, {"p": futs[f][0], "np": pm[futs[f][0]], "err": f"worker:{e}"[:200]})
+                    if i % 1000 == 0:
+                        log.flush()
+                        dt = time.time() - t0
+                        print(f"{i}/{len(todo)} {nb/1e9:.1f} GB {nb/1e6/max(dt,1):.1f} MB/s {dt/60:.1f} min", flush=True)
+            if len(retry) == len(pending):
+                for r in retry:
+                    record(log, {"p": r[0], "np": pm[r[0]], "err": "worker crashed"})
+                break
+            pending = retry
+        log.flush()
+        # large files: two at a time, one task per worker process
+        for r in big:
+            try:
+                with ProcessPoolExecutor(1, initializer=init, initargs=(a.registry, a.out, a.local, pm)) as ex:
+                    res = ex.submit(work, r).result()
+            except Exception as e:
+                res = stream_fallback(r, a, pm, reg, f"{type(e).__name__}")
+            record(log, res)
+            log.flush()
+            print(f"large {r[0][-60:]} {int(r[1])/1e6:.0f} MB done {time.time()-t0:.0f}s", flush=True)
     print("done", flush=True)
 
 
