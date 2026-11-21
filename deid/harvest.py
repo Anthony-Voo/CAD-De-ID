@@ -251,8 +251,59 @@ def harvest_iges(data: bytes, where):
     return out
 
 
+TITLE_LABEL_RE = re.compile(
+    r"\b(?:DRAWN|DESIGNED|DESIGNER|DRAFTER|DRAFTED|CHECKED|CHECKER|APPROVED|APPROVAL|APPR|ENGINEER|ENG|"
+    r"MFG|QA|CHK|DWN|AUTHOR|Drawn|Designed|Designer|Checked|Approved|Author|Engineer|Gezeichnet|Geprüft|"
+    r"Bearbeitet|Dessiné|Vérifié|Dibujado|Revisado|Disegnato|Controllato|Ersteller)(?![A-Za-z])"
+    r"(?:\s+(?:BY|By|by|von|par|por))?\s*[:.]?[ \t]*\n?[ \t]*\n?[ \t]*"
+    r"([A-Z][A-Za-z.'\-]{1,24}(?:[ \t][A-Z][A-Za-z.'\-]{1,24})?)"
+    r"(?=[ \t]*(?:\n|$|\d{1,2}[ ./\-]|\d{4}|[A-Z]{3}\b))"
+)
+NOT_NAME = {"DATE", "SCALE", "SIZE", "SHEET", "TITLE", "REV", "DWG", "NO", "NAME", "SIGNATURE", "MATERIAL",
+            "FINISH", "WEIGHT", "QTY", "DRAWN", "CHECKED", "APPROVED", "DESIGNER", "DRAFTER", "CHECKER",
+            "APPROVAL", "ENG", "MFG", "QA", "TOLERANCES", "UNLESS", "DIMENSIONS", "THIRD", "FIRST", "ANGLE",
+            "PROJECTION", "SURFACE", "MM", "INCH", "INCHES", "NOTES", "DO", "BY", "THE", "AND", "PART",
+            "NUMBER", "DESCRIPTION", "ITEM", "SHEETS", "OF", "DEPT", "TECHNICAL", "REFERENCE", "CREATED",
+            "DOCUMENT", "TYPE", "STATUS", "APPV", "ISSUE", "CHANGE", "ECN", "ECO", "SIGN", "DATUM", "NAME:",
+            "APPR", "OVED", "IN", "FOR", "TO", "AS", "SEE", "ALL", "PER", "WITH", "ON", "AT"}
+
+
+def harvest_title_block(text: str, where):
+    out = []
+    for m in TITLE_LABEL_RE.finditer(text):
+        v = m.group(1).strip()
+        toks = v.replace(".", " ").split()
+        if not toks or any(t.upper().strip(".") in NOT_NAME for t in toks):
+            continue
+        if len(v) < 3 or is_placeholder(v) or SOFTWARE_RE.search(v):
+            continue
+        out.append(("person", v, where))
+    return out
+
+
+def pdf_page_text(data: bytes, maxpages=6) -> str:
+    try:
+        import pypdfium2 as pdfium
+        doc = pdfium.PdfDocument(data)
+        parts = []
+        for i in range(min(len(doc), maxpages)):
+            tp = doc[i].get_textpage()
+            parts.append(tp.get_text_range())
+        doc.close()
+        return "\n".join(parts)
+    except Exception:
+        return ""
+
+
 def harvest_pdf(data: bytes, where):
     out = []
+    try:
+        txt = pdf_page_text(data)
+        if txt:
+            out += harvest_title_block(txt.replace("\r", "\n"), where)
+            out += harvest_text(txt.encode("utf-8", "replace"), where)
+    except Exception:
+        pass
     try:
         import pikepdf
         with pikepdf.open(io.BytesIO(data)) as pdf:

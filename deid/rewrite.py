@@ -242,6 +242,13 @@ def rw_pdf(data: bytes, reg: Registry, where: str, notes: list):
         # every object: strings and streams
         for obj in pdf.objects:
             _pdf_walk(obj, reg, pdf, notes, where)
+        # visible text through the fonts (CID / Identity-H drawings)
+        from .pdftext import rewrite_page_text
+        for page in pdf.pages:
+            try:
+                rewrite_page_text(pdf, page, reg)
+            except Exception as e:
+                notes.append("pdf-text-error")
         if "/Metadata" in pdf.Root:
             try:
                 m = pdf.Root.Metadata

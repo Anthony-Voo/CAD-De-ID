@@ -76,6 +76,8 @@ CURATED = [
     ("person", "William Regli", ALL), ("person", "Regli", ALL), ("person", "Cicirello", ALL),
     ("person", "Daniel Lapadat", ALL), ("person", "Lapadat", ALL), ("org", "Heriot Watt", ALL),
     ("org", "Heriot-Watt University", ALL), ("org", "Drexel University", ALL),
+    ("org", "California Institute of Technology", ALL), ("org", "Massachusetts Institute of Technology", ALL),
+    ("org", "CA Institute of Technology", ALL), ("org", "CA Inst of Technology", ALL),
     # projects / product lines / codenames
     ("project", "Pipettin", ALL), ("project", "pipettin-bot", ALL), ("project", "OpenSourceLeg", ALL),
     ("project", "Open Source Leg", ALL), ("project", "LOCILAMP", ALL), ("project", "ThrowBot", ALL),
