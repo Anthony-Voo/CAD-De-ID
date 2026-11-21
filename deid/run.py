@@ -104,6 +104,37 @@ def work(row):
             "md5in": hashlib.md5(data).hexdigest()}
 
 
+def _zip_stream_rewrite(src, dst_tmp, reg):
+    """Zip-family file too large for memory: rebuild it member by member,
+    each member streamed in blocks (same-length replacement, overlapping
+    blocks so no match is cut) and recompressed, so CRCs stay valid."""
+    import zipfile
+    from .rewrite import _map_component
+    B, OV = 32 << 20, 4096
+    with zipfile.ZipFile(src) as zin, zipfile.ZipFile(dst_tmp, "w", allowZip64=True) as zo:
+        for info in zin.infolist():
+            parts = info.filename.split("/")
+            nn = "/".join(_map_component(c, reg, i == len(parts) - 1 and not info.is_dir()) for i, c in enumerate(parts))
+            zi = zipfile.ZipInfo(nn, date_time=info.date_time)
+            zi.compress_type = info.compress_type if info.compress_type in (0, 8) else 8
+            zi.external_attr = info.external_attr
+            if info.is_dir():
+                zo.writestr(zi, b"")
+                continue
+            with zin.open(info) as fi, zo.open(zi, "w", force_zip64=True) as fo:
+                prev = b""
+                while True:
+                    blk = fi.read(B)
+                    buf = prev + blk
+                    if not blk:
+                        fo.write(prev)
+                        break
+                    new = reg.replace(buf, "text")[0]
+                    keep = min(OV, len(new))
+                    fo.write(new[:len(new) - keep])
+                    prev = new[len(new) - keep:]
+
+
 def stream_fallback(row, a, pm, reg, why):
     """Low-memory path for a huge file whose worker died: fetch to disk, then
     same-length replacement block by block (overlapping, so no match is cut)."""
@@ -120,6 +151,17 @@ def stream_fallback(row, a, pm, reg, why):
             import subprocess
             subprocess.run(["curl", "-fsS", "--retry", "5", "-o", tmp_in, f"{BASE}/{row[3]}"], check=True)
             src = tmp_in
+        with open(src, "rb") as fh:
+            magic = fh.read(4)
+        if magic == b"PK\x03\x04":
+            h = hashlib.md5()
+            with open(src, "rb") as fh:
+                for blk in iter(lambda: fh.read(1 << 24), b""):
+                    h.update(blk)
+            _zip_stream_rewrite(src, dst + ".part~", reg)
+            os.replace(dst + ".part~", dst)
+            return {"p": path, "np": pm[path], "n": int(row[1]), "m": os.path.getsize(dst), "chg": True,
+                    "notes": [f"large-file-streamed:{why}"], "md5in": h.hexdigest()}
         B, OV = 64 << 20, 4096
         h = hashlib.md5()
         with open(src, "rb") as fi, open(dst + ".part~", "wb") as fo:
@@ -270,10 +312,10 @@ def main():
                 break
             pending = retry
         log.flush()
-        # large files: three at a time, one task per worker process, each
+        # large files: two at a time, one task per worker process, each
         # capped at 4.5 GB; a capped/crashed one is streamed instead
         if big:
-            with ProcessPoolExecutor(3, initializer=init, initargs=(a.registry, a.out, a.local, pm, 4.5),
+            with ProcessPoolExecutor(2, initializer=init, initargs=(a.registry, a.out, a.local, pm, 5.5),
                                      max_tasks_per_child=1) as ex:
                 futs = {ex.submit(work, r): r for r in big}
                 for f in as_completed(futs):
