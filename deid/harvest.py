@@ -80,6 +80,7 @@ XML_ATTR_RE = re.compile(
     rb"LicenseTerms|Application|Title)\"[^>]*>\s*(?:<String\s+value=\")?([^<\"]{1,120})",
     re.I,
 )
+XML_PROP_RE = re.compile(rb"<property\b[^>]*\bname=\"([^\"]{1,80})\"[^>]*>\s*<vt:(?:lpwstr|lpstr|bstr)>([^<]{1,160})</vt:", re.I)
 FREECAD_PROP_RE = re.compile(rb"<Property name=\"(CreatedBy|LastModifiedBy|Company)\"[^>]*>\s*<String value=\"([^\"]{1,120})\"")
 
 NS_DOMAINS = re.compile(
@@ -180,6 +181,15 @@ def harvest_text(data: bytes, where: str):
     for m in DXF_RE.finditer(data[:200000]):
         for k, v in person_values(m.group(1).decode("latin-1")):
             out.append((k, v, where))
+    if b"<property" in data or b"<Property" in data:
+        for m in XML_PROP_RE.finditer(data):
+            pname = m.group(1).decode("utf-8", "replace")
+            val = m.group(2).decode("utf-8", "replace")
+            k = formats.ole_field_kind({"fmtid": "", "pid": -1, "name": pname.replace("SW-", "")})
+            if k == "person":
+                out += [(kk, x, where) for kk, x in person_values(val)]
+            elif k == "org":
+                out += [(kk, x, where) for kk, x in org_values(val)]
     for rx in (XML_FIELD_RE, XML_ATTR_RE, FREECAD_PROP_RE):
         for m in rx.finditer(data):
             field = m.group(1).decode("latin-1").lower()

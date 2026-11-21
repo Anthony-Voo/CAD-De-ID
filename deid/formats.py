@@ -104,7 +104,8 @@ def ole_field_kind(d) -> str | None:
         return "account"
     if f.startswith("CC024FA2") and pid in (8, 20):
         return "person"
-    if name and re.search(r"author|designer|drawn|engineer|checked|approved|creat|owner|dessin|dessiné|"
+    if name and re.search(r"author|designer|drawn|engineer|checked|approved|creat(?!ed date|ion date|ed$)|owner|dessin|dessiné|"
+                          r"saved by|last saved|letzten speicherung von|zuletzt gespeichert von|gespeichert von|"
                           r"gezeichnet|bearbeitet|gepr|ersteller|autor|dissenyat|disenad|progett|"
                           r"verificat|manager|responsible|contact|e-?mail|phone|tel", name):
         return "person"
