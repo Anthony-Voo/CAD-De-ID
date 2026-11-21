@@ -97,9 +97,9 @@ def ole_field_kind(d) -> str | None:
             return "person"
         if pid == 15:
             return "org"
-    if f.startswith("32853F0F") and pid in (41, 42, 43, 10, 11, 12, 13, 14, 15, 16, 17):
-        # Design tracking: designer / engineer / authority / checked / approved
-        return "person" if pid not in (15, 16, 17) or name else None
+    if f.startswith("32853F0F") and pid in (41, 42, 43):
+        # Inventor design tracking: designer / engineer / authority
+        return "person"
     if f.startswith("D861FB30") and pid == 16:
         return "account"
     if f.startswith("CC024FA2") and pid in (8, 20):
@@ -201,7 +201,18 @@ def archive_members(kind: str, data: bytes):
                     if f:
                         yield (m.name, f.read())
     elif kind == "7z":
-        import py7zr
+        yield from sevenzip_members(data)
+
+
+def sevenzip_members(data: bytes):
+    import os
+    import tempfile
+    import py7zr
+    with tempfile.TemporaryDirectory(dir=os.environ.get("DEID_TMP")) as td:
         with py7zr.SevenZipFile(io.BytesIO(data)) as z:
-            for name, bio in (z.readall() or {}).items():
-                yield (name, bio.read())
+            z.extractall(path=td)
+        for root, _, files in os.walk(td):
+            for f in sorted(files):
+                p = os.path.join(root, f)
+                with open(p, "rb") as fh:
+                    yield (os.path.relpath(p, td).replace(os.sep, "/"), fh.read())

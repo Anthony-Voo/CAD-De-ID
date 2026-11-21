@@ -68,7 +68,11 @@ def digits(kind: str, key: str, n: int) -> str:
 
 
 def pseudo_text(kind: str, key: str, original: str) -> str:
-    """Pseudonym with exactly len(original) characters, same char classes."""
+    """Pseudonym with exactly len(original) characters, same char classes.
+
+    The kind is ignored on purpose: one key (e.g. "bcn3d") must get one
+    pseudonym whether it was seen as an account, an org or a project."""
+    kind = "id"
     na = sum(1 for c in original if c.isalpha())
     nd = sum(1 for c in original if c.isdigit())
     L = letters(kind, key, na + 2)
@@ -94,6 +98,7 @@ def pseudo_text(kind: str, key: str, original: str) -> str:
 
 def pseudo_bytes(kind: str, key: str, original: bytes, encoding: str) -> bytes:
     """Same-byte-length pseudonym for an encoded occurrence."""
+    kind = "id"
     try:
         txt = original.decode(encoding)
     except UnicodeDecodeError:
