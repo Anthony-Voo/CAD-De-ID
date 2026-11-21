@@ -67,6 +67,7 @@ CURATED = [
     ("org", "Drexel", ALL), ("org", "Spatial Corp", TXT), ("org", "ohwr", TXT), ("org", "CERN", TXT),
     ("org", "G1MRA", ALL), ("org", "Sandia", ALL), ("org", "Haas", TXT), ("org", "ShopBot", ALL),
     ("org", "Dephy", ALL), ("org", "sdpsi", TXT),
+    ("org", "Toyota", ALL), ("org", "NASA", TXT), ("org", "Jet Propulsion Laboratory", ALL),
     # people
     ("person", "Dominique Lachiver", ALL), ("person", "Maximilian Behm", ALL), ("person", "Maxwell Lohss", ALL),
     ("person", "Tom Kramer", ALL), ("person", "Keith Bucklitch", ALL), ("person", "Ulrich Rapp", ALL),

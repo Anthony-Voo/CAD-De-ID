@@ -81,12 +81,19 @@ def pseudo_text(kind: str, key: str, original: str) -> str:
     D = digits(kind, key, nd + 2)
     out = []
     li = di = 0
+    # canonical capitalization: first letter of every letter run upper case,
+    # the rest lower case, whatever the case of this occurrence, so
+    # "SBARNUM", "sbarnum" and "Sbarnum" all become the same string
+    prev_alpha = False
     for c in original:
         if c.isalpha():
             r = L[li]
             li += 1
-            out.append(r.upper() if c.isupper() else r)
-        elif c.isdigit():
+            out.append(r if prev_alpha else r.upper())
+            prev_alpha = True
+            continue
+        prev_alpha = False
+        if c.isdigit():
             out.append(D[di])
             di += 1
         else:
@@ -124,10 +131,14 @@ def pseudo_text_salted(key: str, original: str) -> str:
     L = letters("id", key, na + 2)
     D = digits("id", key, nd + 2)
     out, li, di = [], 0, 0
+    prev_alpha = False
     for c in original:
         if c.isalpha():
-            out.append(L[li].upper() if c.isupper() else L[li]); li += 1
-        elif c.isdigit():
+            out.append(L[li] if prev_alpha else L[li].upper()); li += 1
+            prev_alpha = True
+            continue
+        prev_alpha = False
+        if c.isdigit():
             out.append(D[di]); di += 1
         else:
             out.append(c)
