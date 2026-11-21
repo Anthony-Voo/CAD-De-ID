@@ -97,6 +97,8 @@ class Registry:
         for d in json.load(open(path)):
             i = Identity(d["kind"], d["key"], set(d["variants"]), set(d["ctx"]), d["substr"], d.get("sources", 0))
             r.ids[(i.kind, i.key)] = i
+        from . import pseudo
+        pseudo.FORBIDDEN.update(k for (_, k) in r.ids)
         return r
 
     def remove(self, kind, key):

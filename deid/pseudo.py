@@ -37,6 +37,8 @@ def _stream(kind: str, key: str, n: int, salt: bytes) -> bytes:
 
 
 _cache: dict = {}
+# normalized keys of every real identity: a pseudonym must never spell one
+FORBIDDEN: set = set()
 
 
 def letters(kind: str, key: str, n: int) -> str:
@@ -90,10 +92,30 @@ def pseudo_text(kind: str, key: str, original: str) -> str:
         else:
             out.append(c)
     res = "".join(out)
+    tries = 0
+    while FORBIDDEN and tries < 8 and len(norm_key(res)) >= 3 and norm_key(res) in FORBIDDEN and norm_key(res) != key:
+        tries += 1
+        res = pseudo_text_salted(key + "#" + str(tries), original)
     if res.lower() == original.lower() and original:
         # practically impossible; perturb deterministically
         res = res[:-1] + ("x" if res[-1] != "x" else "q")
     return res
+
+
+def pseudo_text_salted(key: str, original: str) -> str:
+    na = sum(1 for c in original if c.isalpha())
+    nd = sum(1 for c in original if c.isdigit())
+    L = letters("id", key, na + 2)
+    D = digits("id", key, nd + 2)
+    out, li, di = [], 0, 0
+    for c in original:
+        if c.isalpha():
+            out.append(L[li].upper() if c.isupper() else L[li]); li += 1
+        elif c.isdigit():
+            out.append(D[di]); di += 1
+        else:
+            out.append(c)
+    return "".join(out)
 
 
 def pseudo_bytes(kind: str, key: str, original: bytes, encoding: str) -> bytes:
