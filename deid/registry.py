@@ -178,18 +178,22 @@ class Registry:
                         prev = best[ci].get(pat)
                         if prev is None or len(ident.key) > len(prev[1]):
                             best[ci][pat] = val
-        autos = {}
+        # one automaton over lower-cased data: case-insensitive patterns as
+        # they are, exact-case patterns verified against the original bytes
+        merged = {}
         for ci, d in best.items():
-            if not d:
-                autos[ci] = None
-                continue
-            A = ahocorasick.Automaton()
             for pat, val in d.items():
-                A.add_word(pat, val)
+                lp = pat.encode("latin-1").lower().decode("latin-1")
+                merged.setdefault(lp, []).append((val, None if ci else pat.encode("latin-1")))
+        if merged:
+            A = ahocorasick.Automaton()
+            for lp, vals in merged.items():
+                A.add_word(lp, vals)
             A.make_automaton()
-            autos[ci] = A
-        self._auto[ctx] = autos
-        return autos
+        else:
+            A = None
+        self._auto[ctx] = A
+        return A
 
     @staticmethod
     def _bounded(data, s, e, enc, substr):
@@ -216,7 +220,7 @@ class Registry:
         (text whose word spaces are lost, e.g. glyph-by-glyph PDF text)."""
         if not data:
             return []
-        autos = self.automaton(ctx)
+        A = self.automaton(ctx)
         cands = []
         if self.literals:
             L = self._literal_auto()
@@ -225,15 +229,17 @@ class Registry:
                     s, e = end - val[4] + 1, end + 1
                     if self._bounded(data, s, e, val[2], False):
                         cands.append((s, e, val))
-        for ci, A in autos.items():
-            if A is None:
-                continue
-            text = (data.lower() if ci else data).decode("latin-1")
-            for end, val in A.iter(text):
-                kind, key, enc, substr, ln = val
-                s, e = end - ln + 1, end + 1
-                if self._bounded(data, s, e, enc, substr or (loose and len(key) >= 6)):
-                    cands.append((s, e, val))
+        if A is not None:
+            text = data.lower().decode("latin-1")
+            for end, vals in A.iter(text):
+                for val, exact in vals:
+                    kind, key, enc, substr, ln = val
+                    s, e = end - ln + 1, end + 1
+                    if exact is not None and data[s:e] != exact:
+                        continue
+                    if self._bounded(data, s, e, enc, substr or (loose and len(key) >= 6)):
+                        cands.append((s, e, val))
+                        break
         if not cands:
             return []
         cands.sort(key=lambda x: (x[0], -(x[1] - x[0])))
