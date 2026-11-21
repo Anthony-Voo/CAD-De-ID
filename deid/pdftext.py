@@ -95,7 +95,34 @@ def _simple_base_map(enc_name: str) -> dict:
     return m
 
 
+_CID_CACHE: dict = {}
+
+
 def _cid_font_map(font) -> dict:
+    # content-based key: identical font program + CID->GID map give an
+    # identical character map, whatever document they come from
+    try:
+        import hashlib
+        desc = font.DescendantFonts[0]
+        ff = desc.FontDescriptor.get("/FontFile2")
+        c2g = desc.get("/CIDToGIDMap")
+        h = hashlib.md5(ff.read_raw_bytes() if ff is not None else b"")
+        if isinstance(c2g, pikepdf.Stream):
+            h.update(c2g.read_raw_bytes())
+        key = h.hexdigest()
+    except Exception:
+        key = None
+    if key is not None and key in _CID_CACHE:
+        return dict(_CID_CACHE[key])
+    m = _cid_font_map_uncached(font)
+    if key is not None:
+        if len(_CID_CACHE) > 256:
+            _CID_CACHE.clear()
+        _CID_CACHE[key] = m
+    return dict(m)
+
+
+def _cid_font_map_uncached(font) -> dict:
     """CID -> unicode for a Type0 font without ToUnicode, read from the
     embedded TrueType font's cmap (as text extractors do)."""
     import io as _io
