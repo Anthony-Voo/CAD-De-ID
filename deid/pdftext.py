@@ -237,13 +237,13 @@ class FontCodec:
             self.font.ToUnicode = pdf.make_stream(_write_cmap(self.map, 1))
 
 
-def _replace_text(text: str, reg: Registry) -> str:
+def _replace_text(text: str, reg: Registry, loose: bool = False) -> str:
     b = text.encode("utf-16-le")
-    nb = reg.replace(b, "text")[0]
+    nb = reg.replace(b, "text", loose=loose)[0]
     if nb == b:
         # UTF-16 patterns only match ASCII-compatible data well; also try UTF-8
         u = text.encode("utf-8")
-        nu = reg.replace(u, "text")[0]
+        nu = reg.replace(u, "text", loose=loose)[0]
         if nu == u:
             return text
         try:
@@ -301,7 +301,10 @@ def rewrite_page_text(pdf, page_obj, reg: Registry, depth=0) -> int:
         text = "".join(parts)
         if not text.strip():
             return
-        nt = _replace_text(text, reg)
+        # glyph-by-glyph pages carry no space characters: word boundaries are
+        # unknown, so distinctive identities (6+ chars) may match inside runs
+        singles = sum(1 for sg in segs if len(sg[4].strip()) <= 1)
+        nt = _replace_text(text, reg, loose=singles > 0.6 * len(segs))
         if nt == text:
             return
         for k, (oi, ai, codec, codes, t) in enumerate(segs):

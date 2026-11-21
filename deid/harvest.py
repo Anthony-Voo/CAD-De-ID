@@ -356,7 +356,8 @@ def harvest_iges(data: bytes, where):
 TITLE_LABEL_RE = re.compile(
     r"\b(?:DRAWN|DESIGNED|DESIGNER|DRAFTER|DRAFTED|CHECKED|CHECKER|APPROVED|APPROVAL|APPR|ENGINEER|ENG|"
     r"MFG|QA|CHK|DWN|AUTHOR|Drawn|Designed|Designer|Checked|Approved|Author|Engineer|Gezeichnet|Geprüft|"
-    r"Bearbeitet|Dessiné|Vérifié|Dibujado|Revisado|Disegnato|Controllato|Ersteller)(?![A-Za-z])"
+    r"Bearbeitet|Dessiné|Vérifié|Dibujado|Revisado|Disegnato|Controllato|Ersteller|Contact Name|Contact Person|"
+    r"Contact|Prepared|Submitted|Ansprechpartner|Kontakt)(?![A-Za-z])"
     r"(?:\s+(?:BY|By|by|von|par|por))?\s*[:.]?[ \t]*\n?[ \t]*\n?[ \t]*"
     r"([A-Z][A-Za-z.'\-]{1,24}(?:[ \t][A-Z][A-Za-z.'\-]{1,24})?)"
     r"(?=[ \t]*(?:\n|$|\d{1,2}[ ./\-]|\d{4}|[A-Z]{3}\b))"

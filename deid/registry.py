@@ -202,8 +202,10 @@ class Registry:
                 return False
         return True
 
-    def find(self, data: bytes, ctx: str):
-        """Non-overlapping, leftmost-longest matches: list of (start, end, info)."""
+    def find(self, data: bytes, ctx: str, loose: bool = False):
+        """Non-overlapping, leftmost-longest matches: list of (start, end, info).
+        loose=True: identities of 6+ characters also match inside words
+        (text whose word spaces are lost, e.g. glyph-by-glyph PDF text)."""
         if not data:
             return []
         autos = self.automaton(ctx)
@@ -222,7 +224,7 @@ class Registry:
             for end, val in A.iter(text):
                 kind, key, enc, substr, ln = val
                 s, e = end - ln + 1, end + 1
-                if self._bounded(data, s, e, enc, substr):
+                if self._bounded(data, s, e, enc, substr or (loose and len(key) >= 6)):
                     cands.append((s, e, val))
         if not cands:
             return []
@@ -234,8 +236,8 @@ class Registry:
                 last = c[1]
         return out
 
-    def replace(self, data: bytes, ctx: str, hits=None):
-        ms = self.find(data, ctx)
+    def replace(self, data: bytes, ctx: str, hits=None, loose: bool = False):
+        ms = self.find(data, ctx, loose) if loose else self.find(data, ctx)
         if not ms:
             return data, 0
         buf = bytearray(data)
@@ -261,11 +263,11 @@ class Overlay(Registry):
         super().__init__()
         self.base = base
 
-    def find(self, data: bytes, ctx: str):
-        a = self.base.find(data, ctx)
+    def find(self, data: bytes, ctx: str, loose: bool = False):
+        a = self.base.find(data, ctx, loose)
         if not self.ids:
             return a
-        b = Registry.find(self, data, ctx)
+        b = Registry.find(self, data, ctx, loose)
         if not b:
             return a
         cands = sorted(a + b, key=lambda x: (x[0], -(x[1] - x[0])))
