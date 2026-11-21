@@ -20,18 +20,16 @@ HOW TO RUN (reproduces this corpus exactly)
   python3 -m pip install -r code/requirements.lock        # exact versions used
   bash code/pipeline.sh ./work                            # -> ./work/cleaned-corpus
 
-  The pipeline is deterministic: pseudonyms are an HMAC of the normalized
-  identity under the key DEID_SECRET (this attempt used the default key in
-  code/deid/pseudo.py), so every identity gets the same pseudonym on every
-  run.  The identity list itself is rebuilt by the discovery pass; part of
-  this attempt's discovery ran with an earlier version of harvest.py, so a
-  fresh run can find a few more or fewer identities than this corpus used.
-  Set DEID_SECRET to a private value for a fresh, unlinkable mapping.
-  pipeline.sh downloads the input from the Builders mirror, so it needs no
-  local copy; on a machine with less than ~150 GB free use
-  code/tools/drive2.sh, which processes, uploads and deletes ~30 GB chunks.
-  Private artefacts (registry.json identity list, pathmap.tsv, run logs) are
-  written to the work directory only and are not part of this submission.
+  Deterministic: pipeline.sh reuses code/data/identities.json, the exact list
+  of identities found for this submission (identifier-matching data only, no
+  original-to-pseudonym table), and pseudonyms are an HMAC of each identity
+  under DEID_SECRET (this submission used the default key in
+  code/deid/pseudo.py).  Same input + same list + same key = the same files.
+  REDISCOVER=1 rebuilds the list from the input with the discovery pass.
+  pipeline.sh downloads the input from the Builders mirror; on a machine with
+  less than ~150 GB free use code/tools/drive3.sh, which processes, uploads
+  and deletes ~25 GB chunks.  Run logs and path maps stay in the work
+  directory and are not part of this submission.
 
 Steps (all in code/deid/):
   1. discover.py       streams every input file and harvests identity values:
