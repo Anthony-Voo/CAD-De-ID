@@ -80,6 +80,7 @@ def main():
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--log", required=True)
     ap.add_argument("--pathmap-out")
+    ap.add_argument("--budget-gb", type=float, default=0, help="stop after this much input (chunked runs)")
     a = ap.parse_args()
     rows = [l.rstrip("\n").split("\t") for l in open(a.manifest) if not l.startswith("#")]
     reg = Registry.from_json(a.registry)
@@ -100,6 +101,14 @@ def main():
     todo = [r for r in rows if r[0].startswith(a.prefix) and r[0] not in done]
     if a.limit:
         todo = todo[: a.limit]
+    if a.budget_gb:
+        sel, tot = [], 0
+        for r in todo:
+            if tot + int(r[1]) > a.budget_gb * 1e9 and sel:
+                break
+            sel.append(r)
+            tot += int(r[1])
+        todo = sel
     todo.sort(key=lambda r: int(r[1]) > 200_000_000)
     print(f"{len(todo)} to do, {len(done)} done", flush=True)
     t0 = time.time()
