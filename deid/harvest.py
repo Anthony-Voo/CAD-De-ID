@@ -167,8 +167,17 @@ def org_values(v: str):
     return [("org", v)]
 
 
+PHONE_RE = re.compile(
+    rb"(?i)\b(?:tel(?:ephone)?|phone|fax|mobile|mob|cell|t\xc3\xa9l\xc3\xa9phone|telefon|tel\xc3\xa9fono|handy)\.?\s*"
+    rb"(?:\([a-z]+\))?\s*[:.]?\s*(\+?\(?\d[\d\s().\-/]{6,20}\d)")
+
+
 def harvest_text(data: bytes, where: str):
     out = []
+    for m in PHONE_RE.finditer(data):
+        num = m.group(1).decode("latin-1").strip()
+        if sum(c.isdigit() for c in num) >= 7:
+            out.append(("phone", num, where))
     for m in EMAIL_RE.finditer(data):
         e = m.group().decode("latin-1").lstrip("-._")
         local, dom = e.split("@", 1)

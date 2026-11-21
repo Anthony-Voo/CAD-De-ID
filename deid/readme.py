@@ -77,6 +77,8 @@ WHAT IS REWRITTEN
   compression method.  tar, tar.gz/.tgz, .gz, .bz2, .xz, .Z (LZW) and .7z
   archives are unpacked, rewritten recursively and repacked in the same
   format, so no unprocessed copy of an original identifier remains.
+* Phone/fax numbers next to a Tel/Phone/Fax/Mobile label get same-format
+  fake numbers (digits replaced, punctuation kept).
 * PNG text chunks and JPEG APP/comment segments (EXIF/XMP).
 * Other binary formats (JT, Parasolid binary, CATIA V5, NX, Creo, DWG, U3D,
   STL headers, ...): same-length replacement of distinctive identifiers

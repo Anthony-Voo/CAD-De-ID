@@ -100,7 +100,7 @@ def local_registry(reg: Registry, where: str, data: bytes):
         found = harvest(where, data)
     except Exception:
         pass
-    vals = {(k, clean(v)) for k, v, _ in found if v and not is_placeholder(clean(v))}
+    vals = {(k, clean(v)) for k, v, _ in found if v and (k == "phone" or not is_placeholder(clean(v)))}
     if not vals:
         return reg, found
     from .registry import Overlay
@@ -113,6 +113,9 @@ def local_registry(reg: Registry, where: str, data: bytes):
             continue
         if k == "domain":
             continue  # domains are handled globally (labels may be generic)
+        if k == "phone":
+            loc.add("phone", v, ctx=("text", "bin"), variants=[v])
+            continue
         nk = norm_key(v)
         if len(nk) < 2:
             continue
