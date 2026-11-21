@@ -36,11 +36,35 @@ SOFTWARE_RE = re.compile(
     re.I,
 )
 
-EMAIL_RE = re.compile(rb"[A-Za-z0-9._%+\-]{1,64}@(?:[A-Za-z0-9\-]{1,63}\.){1,6}[A-Za-z]{2,12}(?![A-Za-z0-9])")
+EMAIL_DOM_RE = re.compile(rb"@((?:[A-Za-z0-9\-]{1,63}\.){1,6}[A-Za-z]{2,12})(?![A-Za-z0-9])")
+LOCAL_TAIL_RE = re.compile(rb"[A-Za-z0-9._%+\-]{1,64}$")
+
+
+class _M:
+    def __init__(self, b):
+        self.b = b
+
+    def group(self, *a):
+        return self.b
+
+
+def _emails(data):
+    for m in EMAIL_DOM_RE.finditer(data):
+        s = m.start()
+        lm = LOCAL_TAIL_RE.search(data, max(0, s - 64), s)
+        if lm:
+            yield _M(data[lm.start():m.end()])
+
+
+class _EmailFinder:
+    def finditer(self, data):
+        return _emails(data)
+
+
+EMAIL_RE = _EmailFinder()
 URL_RE = re.compile(rb"(?:https?|ftp)://([A-Za-z0-9\-]{1,63}(?:\.[A-Za-z0-9\-]{1,63}){1,6})")
 USERDIR_RE = re.compile(
-    rb"(?:[A-Za-z]:[\\/]+(?:Users|Documents and Settings|home)[\\/]+|/home/|/Users/)([A-Za-z0-9._\- ]{2,40}?)(?=[\\/])",
-    re.I,
+    rb"(?:Users|USERS|users|Documents and Settings|home)[\\/]+([A-Za-z0-9._\- ]{2,40}?)(?=[\\/])",
 )
 LOGIN_RE = re.compile(rb"\b([A-Z0-9][A-Za-z0-9\-]{2,30})\\([A-Za-z][A-Za-z0-9._\-]{1,30})\b")
 COPYRIGHT_RE = re.compile(rb"(?:Copyright|\(c\)|\xc2\xa9)\s*(?:\(c\)\s*)?(?:\d{4}(?:\s*[-,]\s*\d{4})?\s*,?\s*)?(?:by\s+)?([A-Z][A-Za-z.\-']+(?:\s+[A-Z][A-Za-z.\-']+){1,3})")
@@ -140,7 +164,7 @@ def harvest_text(data: bytes, where: str):
         u = clean(m.group(1).decode("latin-1"))
         if not is_placeholder(u) and u.lower() not in ("public", "all users", "default user", "shared"):
             out.append(("account", u, where))
-    for m in LOGIN_RE.finditer(data):
+    for m in (LOGIN_RE.finditer(data) if (b"DESKTOP-" in data or b"LAPTOP-" in data) else ()):
         dom, user = (x.decode("latin-1") for x in m.groups())
         if re.fullmatch(r"(DESKTOP|LAPTOP|PC|WIN)-[A-Z0-9]{4,}", dom) and not is_placeholder(user):
             out.append(("account", user, where))
