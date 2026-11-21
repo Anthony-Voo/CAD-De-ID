@@ -31,7 +31,7 @@ PLACEHOLDER = {
 SOFTWARE_RE = re.compile(
     r"(solid\s*works|autodesk|inventor|catia|creo|pro/?engineer|freecad|open\s*cascade|spatial|acis|parasolid|"
     r"siemens|nx\b|solid\s*edge|onshape|fusion|rhino|sketchup|microsoft|word|excel|powerpoint|acrobat|adobe|"
-    r"distiller|pdf|ghostscript|cairo|inkscape|libreoffice|openoffice|tex|latex|qt\b|altium|kicad|eagle|"
+    r"distiller|pdf|matra|datavision|corel|zwcad|ansys|abaqus|comsol|mathworks|bentley|intergraph|graphisoft|bricsys|ghostscript|cairo|inkscape|libreoffice|openoffice|tex|latex|qt\b|altium|kicad|eagle|"
     r"step|iges|translator|processor|exporter|converter|version|build|\bsp\d|release|\d+\.\d+)",
     re.I,
 )
@@ -118,8 +118,12 @@ def org_values(v: str):
 def harvest_text(data: bytes, where: str):
     out = []
     for m in EMAIL_RE.finditer(data):
-        e = m.group().decode("latin-1")
+        e = m.group().decode("latin-1").lstrip("-._")
         local, dom = e.split("@", 1)
+        if not (dom == dom.lower() or dom.split(".")[-1] == dom.split(".")[-1].upper() == dom.split(".")[-1] and dom[0].isalpha() and len(dom.split(".")[-2]) >= 3):
+            continue
+        if len(local) < 2 or re.fullmatch(r"[A-Za-z0-9]{1,6}", local) and not re.fullmatch(r"[a-z]+|[A-Z][a-z]+", local):
+            continue
         if re.search(r"\.(png|jpg|gif|svg|tlb|dll)$", e, re.I) or NS_DOMAINS.search(dom):
             continue
         if not re.search(r"[A-Za-z]{2}", local) or not re.fullmatch(r"[a-z0-9.\-]+", dom.lower()):
@@ -214,9 +218,10 @@ def harvest_iges(data: bytes, where):
             else:
                 cur += c
             i += 1
-        if len(fields) > 15:
-            out += [(k, x, where) for k, x in person_values(fields[14])]
-            out += [(k, x, where) for k, x in org_values(fields[15])]
+        # 1-based global parameters 21 = author, 22 = organization
+        if len(fields) > 21:
+            out += [(k, x, where) for k, x in person_values(fields[20])]
+            out += [(k, x, where) for k, x in org_values(fields[21])]
     except Exception:
         pass
     return out
