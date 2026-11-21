@@ -73,11 +73,70 @@ def _write_cmap(m: dict, nbytes: int) -> bytes:
     return b"".join(out)
 
 
+def _glyph_unicode(name: str) -> str:
+    try:
+        from fontTools.agl import toUnicode
+        u = toUnicode(name)
+        return u[:1] if u else ""
+    except Exception:
+        return name if len(name) == 1 else ""
+
+
+def _simple_base_map(enc_name: str) -> dict:
+    codec = {"/MacRomanEncoding": "mac_roman"}.get(enc_name, "cp1252")
+    m = {}
+    for c in range(32, 256):
+        try:
+            ch = bytes([c]).decode(codec)
+        except UnicodeDecodeError:
+            continue
+        if ch.isprintable():
+            m[c] = ch
+    return m
+
+
+def _cid_font_map(font) -> dict:
+    """CID -> unicode for a Type0 font without ToUnicode, read from the
+    embedded TrueType font's cmap (as text extractors do)."""
+    import io as _io
+    try:
+        desc = font.DescendantFonts[0]
+        fd = desc.FontDescriptor
+        ff = fd.get("/FontFile2")
+        if ff is None:
+            return {}
+        from fontTools.ttLib import TTFont
+        tt = TTFont(_io.BytesIO(ff.read_bytes()), lazy=True, fontNumber=0)
+        cmap = tt.getBestCmap() or {}
+        gid_uni = {}
+        for uni, gname in cmap.items():
+            try:
+                gid = tt.getGlyphID(gname)
+            except Exception:
+                continue
+            gid_uni.setdefault(gid, chr(uni))
+        c2g = desc.get("/CIDToGIDMap")
+        if c2g is None or (isinstance(c2g, pikepdf.Name) and str(c2g) == "/Identity"):
+            return dict(gid_uni)
+        if isinstance(c2g, pikepdf.Stream):
+            raw = c2g.read_bytes()
+            out = {}
+            for cid in range(len(raw) // 2):
+                gid = (raw[2 * cid] << 8) | raw[2 * cid + 1]
+                if gid in gid_uni:
+                    out[cid] = gid_uni[gid]
+            return out
+    except Exception:
+        return {}
+    return {}
+
+
 class FontCodec:
     def __init__(self, font):
         self.font = font
         self.ok = True
         self.changed = False
+        self.from_font = False
         sub = font.get("/Subtype")
         self.two = sub == "/Type0"
         self.map = {}
@@ -90,19 +149,27 @@ class FontCodec:
                 self.map = {}
         if not self.map:
             if self.two:
-                self.ok = False  # cannot read CID text without ToUnicode
+                self.map = _cid_font_map(font)
+                self.from_font = bool(self.map)
+                if not self.map:
+                    self.ok = False  # no way to read this CID text
             else:
-                self.map = dict(WIN)
                 enc = font.get("/Encoding")
+                base = "/WinAnsiEncoding"
+                if isinstance(enc, pikepdf.Name):
+                    base = str(enc)
+                elif isinstance(enc, pikepdf.Dictionary) and "/BaseEncoding" in enc:
+                    base = str(enc.BaseEncoding)
+                self.map = _simple_base_map(base)
                 if isinstance(enc, pikepdf.Dictionary) and "/Differences" in enc:
                     code = 0
                     for x in enc.Differences:
                         if isinstance(x, int):
                             code = int(x)
                         else:
-                            name = str(x)[1:]
-                            if len(name) == 1:
-                                self.map[code] = name
+                            u = _glyph_unicode(str(x)[1:])
+                            if u:
+                                self.map[code] = u
                             code += 1
         self.rev = {}
         for c, s in sorted(self.map.items(), reverse=True):
@@ -137,7 +204,7 @@ class FontCodec:
         return c
 
     def flush(self, pdf):
-        if self.changed and (self.two or "/ToUnicode" in self.font):
+        if self.changed and (self.two or "/ToUnicode" in self.font or self.from_font):
             self.font.ToUnicode = pdf.make_stream(_write_cmap(self.map, self.nbytes))
         elif self.changed:
             self.font.ToUnicode = pdf.make_stream(_write_cmap(self.map, 1))
@@ -162,66 +229,95 @@ def _replace_text(text: str, reg: Registry) -> str:
 
 
 def rewrite_page_text(pdf, page_obj, reg: Registry, depth=0) -> int:
-    """Rewrite text in a page or form XObject; returns number of changed ops."""
+    """Rewrite text in a page or form XObject; returns number of changed ops.
+
+    Text is matched per text block (BT ... ET): names drawn by several Tj/TJ
+    operators (one word or even one glyph at a time, common in CAD exports)
+    are joined before matching, and each changed character is re-encoded
+    with the font of the operator that draws it."""
     res = page_obj.get("/Resources")
     if res is None or depth > 4:
         return 0
     fonts = res.get("/Font") or {}
     codecs = {}
     try:
-        ops = pikepdf.parse_content_stream(page_obj)
+        ops = [[list(o), op] for o, op in pikepdf.parse_content_stream(page_obj)]
     except Exception:
         return 0
     cur = None
     changed = 0
-    new_ops = []
-    for operands, op in ops:
+    block = []  # segments: (op index, array index or None, codec, codes, text)
+
+    def process(segs):
+        nonlocal changed
+        if not segs:
+            return
+        # join operators with a space (natural word boundary), except
+        # glyph-by-glyph output and the pieces of one kerned TJ array
+        parts, starts = [], []
+        pos = 0
+        prev = None
+        for (oi, ai, codec, codes, t) in segs:
+            if prev is not None:
+                same_tj = prev[0] == oi
+                single = len(prev[4].strip()) <= 1 and len(t.strip()) <= 1
+                if not same_tj and not single:
+                    parts.append(" ")
+                    pos += 1
+            starts.append(pos)
+            parts.append(t)
+            pos += len(t)
+            prev = (oi, ai, codec, codes, t)
+        text = "".join(parts)
+        if not text.strip():
+            return
+        nt = _replace_text(text, reg)
+        if nt == text:
+            return
+        for k, (oi, ai, codec, codes, t) in enumerate(segs):
+            seg_new = nt[starts[k]:starts[k] + len(t)]
+            if seg_new == t:
+                continue
+            nb = bytearray()
+            for oc, och, nch in zip(codes, t, seg_new):
+                code = oc if och == nch else codec.encode_char(nch)
+                if code is None:
+                    code = oc
+                nb += code.to_bytes(codec.nbytes, "big")
+            if ai is None:
+                ops[oi][0][-1] = pikepdf.String(bytes(nb))
+            else:
+                ops[oi][0][0][ai] = pikepdf.String(bytes(nb))
+            changed += 1
+
+    for oi, (operands, op) in enumerate(ops):
         opn = str(op)
-        if opn == "Tf" and operands:
+        if opn == "BT":
+            process(block)
+            block = []
+        elif opn == "ET":
+            process(block)
+            block = []
+        elif opn == "Tf" and operands:
             name = str(operands[0])
             if name not in codecs:
                 f = fonts.get(name)
-                codecs[name] = FontCodec(f) if f is not None else None
+                try:
+                    codecs[name] = FontCodec(f) if f is not None else None
+                except Exception:
+                    codecs[name] = None
             cur = codecs[name]
-        elif opn in ("Tj", "TJ", "'", '"') and cur is not None and cur.ok:
-            strs = []
+        elif opn in ("Tj", "TJ", "'", '"') and cur is not None and cur.ok and operands:
             if opn == "TJ":
                 arr = operands[0]
-                idx = [i for i in range(len(arr)) if isinstance(arr[i], pikepdf.String)]
-                strs = [bytes(arr[i]) for i in idx]
-            else:
-                k = len(operands) - 1
-                strs = [bytes(operands[k])]
-            decoded = [cur.decode(s) for s in strs]
-            text = "".join(t for _, t in decoded)
-            nt = _replace_text(text, reg) if text.strip() else text
-            if nt != text:
-                pos = 0
-                out_strs = []
-                okall = True
-                for (codes, t), s in zip(decoded, strs):
-                    seg_new = nt[pos:pos + len(t)]
-                    pos += len(t)
-                    nb = bytearray()
-                    for oc, och, nch in zip(codes, t, seg_new):
-                        if och == nch:
-                            code = oc
-                        else:
-                            code = cur.encode_char(nch)
-                            if code is None:
-                                okall = False
-                                code = oc
-                        nb += code.to_bytes(cur.nbytes, "big")
-                    out_strs.append(bytes(nb))
-                if okall or True:
-                    if opn == "TJ":
-                        arr = operands[0]
-                        for i, nbs in zip(idx, out_strs):
-                            arr[i] = pikepdf.String(nbs)
-                    else:
-                        operands = list(operands)
-                        operands[-1] = pikepdf.String(out_strs[0])
-                    changed += 1
+                if isinstance(arr, pikepdf.Array):
+                    for ai in range(len(arr)):
+                        if isinstance(arr[ai], pikepdf.String):
+                            codes, t = cur.decode(bytes(arr[ai]))
+                            block.append((oi, ai, cur, codes, t))
+            elif isinstance(operands[-1], pikepdf.String):
+                codes, t = cur.decode(bytes(operands[-1]))
+                block.append((oi, None, cur, codes, t))
         elif opn == "Do" and operands:
             xo = (res.get("/XObject") or {}).get(str(operands[0]))
             if xo is not None and xo.get("/Subtype") == "/Form":
@@ -229,9 +325,9 @@ def rewrite_page_text(pdf, page_obj, reg: Registry, depth=0) -> int:
                     changed += rewrite_page_text(pdf, xo, reg, depth + 1)
                 except Exception:
                     pass
-        new_ops.append((operands, op))
+    process(block)
     if changed:
-        data = pikepdf.unparse_content_stream(new_ops)
+        data = pikepdf.unparse_content_stream([(o, op) for o, op in ops])
         if isinstance(page_obj, pikepdf.Page):
             page_obj.obj.Contents = pdf.make_stream(data)
         elif isinstance(page_obj, pikepdf.Stream):

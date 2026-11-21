@@ -67,7 +67,12 @@ CURATED = [
     ("org", "Drexel", ALL), ("org", "Spatial Corp", TXT), ("org", "ohwr", TXT), ("org", "CERN", TXT),
     ("org", "G1MRA", ALL), ("org", "Sandia", ALL), ("org", "Haas", TXT), ("org", "ShopBot", ALL),
     ("org", "Dephy", ALL), ("org", "sdpsi", TXT),
-    ("org", "Toyota", ALL), ("org", "NASA", TXT), ("org", "Jet Propulsion Laboratory", ALL),
+    ("org", "Toyota", ALL), ("org", "University of Michigan", ALL), ("org", "University of Southampton", ALL),
+    ("org", "University of Stuttgart", ALL), ("org", "University of Ljubljana", ALL), ("org", "Universität Stuttgart", ALL),
+    ("org", "Delft University of Technology", ALL), ("org", "RWTH Aachen University", ALL), ("org", "Aarhus University", ALL),
+    ("org", "Technical University of Denmark", ALL), ("org", "Imperial College London", ALL), ("org", "Heriot-Watt", ALL),
+    ("org", "Lawrence Berkeley National Laboratory", ALL), ("org", "Berkeley Lab", ALL), ("org", "IIT Madras", ALL),
+    ("org", "Indian Institute of Technology", ALL), ("org", "Open Source Ecology", ALL), ("org", "NASA", TXT), ("org", "Jet Propulsion Laboratory", ALL),
     # people
     ("person", "Dominique Lachiver", ALL), ("person", "Maximilian Behm", ALL), ("person", "Maxwell Lohss", ALL),
     ("person", "Tom Kramer", ALL), ("person", "Keith Bucklitch", ALL), ("person", "Ulrich Rapp", ALL),

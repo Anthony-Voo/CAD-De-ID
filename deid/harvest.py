@@ -173,6 +173,61 @@ PHONE_RE = re.compile(
     rb"(?:\([a-z]+\))?\s*[:.]?\s*(\+?\(?\d[\d\s().\-/]{6,20}\d)")
 
 
+ORG_SUFFIX_RE = re.compile(
+    rb"\b((?:[A-Z][A-Za-z0-9&'\-]+[ ]){0,4}[A-Z][A-Za-z0-9&'\-]+),? (Inc\.?|Incorporated|GmbH|mbH|Ltd\.?|Limited|LLC|"
+    rb"Corp\.?|Corporation|Co\.,? ?Ltd\.?|AG|S\.A\.|S\.p\.A\.|SpA|S\.r\.l\.|Srl|B\.V\.|N\.V\.|Oy|A/S|"
+    rb"Pty\.? Ltd\.?|PLC|KG|SAS|SARL)(?![A-Za-z])")
+INST_OF_RE = re.compile(
+    rb"\b((?:University|Universit\xc3\xa4t|Universidad|Universit\xc3\xa9|Institute|Instituto|Istituto|Hochschule|"
+    rb"Politecnico)(?: of| de| f\xc3\xbcr| di)?(?: [A-Z][A-Za-z\-]+){1,3})")
+INST_X_RE = re.compile(rb"\b((?:[A-Z][A-Za-z\-]+ ){1,3}(?:University|Institute of Technology|National Laboratory|Laboratory))\b")
+INST_RE = re.compile(
+    rb"\b((?:University|Universit\xc3\xa4t|Universidad|Universit\xc3\xa9|Institute|Instituto|Istituto|Hochschule|"
+    rb"Politecnico)(?: of| de| f\xc3\xbcr| di)?(?: [A-Z][A-Za-z\-]+){1,3})|"
+    rb"\b((?:[A-Z][A-Za-z\-]+ ){1,3}(?:University|Institute of Technology|National Laboratory|Laboratory))\b")
+
+
+def _all_common(v: str) -> bool:
+    try:
+        from wordfreq import zipf_frequency
+    except ImportError:
+        return False
+    toks = [t for t in re.split(r"[\s,.&'\-]+", v) if t]
+    stop = {"inc", "ltd", "llc", "corp", "corporation", "gmbh", "co", "company", "limited", "ag", "sa", "university",
+            "of", "institute", "technology", "laboratory", "the", "de", "di", "für", "national"}
+    core = [t for t in toks if t.lower() not in stop]
+    return not core or all(max(zipf_frequency(t.lower(), l) for l in ("en", "de", "fr")) >= 3.3 for t in core)
+
+
+def harvest_orgs(data: bytes, where: str):
+    out = []
+    if b"Inc" in data or b"Ltd" in data or b"GmbH" in data or b"Corp" in data or b"LLC" in data or b"AG" in data \
+            or b"S.A" in data or b"B.V" in data or b"SpA" in data:
+        for m in ORG_SUFFIX_RE.finditer(data):
+            name = m.group(1).decode("utf-8", "replace")
+            toks = name.split()
+            while toks and toks[0].lower() in ("copyright", "by", "from", "of", "and", "the", "this", "our", "your",
+                                               "a", "an", "all", "any", "each", "such", "other"):
+                toks = toks[1:]
+            if not toks or (len(toks) == 1 and _all_common(toks[0])):
+                continue
+            name = " ".join(toks)
+            v = name + m.group(0).decode("utf-8", "replace")[len(m.group(1).decode("utf-8", "replace")):]
+            out += [(k, x, where) for k, x in org_values(v.strip())]
+    if b"Univers" in data or b"Institut" in data or b"Laborator" in data or b"Istituto" in data or b"Hochschule" in data:
+        found = []
+        for rx in (INST_OF_RE, INST_X_RE):
+            for m in rx.finditer(data):
+                found.append(m.group(1).decode("utf-8", "replace").strip())
+        for v in found:
+            toks = v.split()
+            while toks and toks[0].lower() in ("the", "this", "our", "your", "a", "an", "and", "at", "from"):
+                toks = toks[1:]
+            if len(toks) >= 2:
+                out += [(k, x, where) for k, x in org_values(" ".join(toks))]
+    return out
+
+
 def harvest_text(data: bytes, where: str):
     out = []
     for m in PHONE_RE.finditer(data):
@@ -348,6 +403,7 @@ def harvest_pdf(data: bytes, where):
         txt = pdf_page_text(data)
         if txt:
             out += harvest_title_block(txt.replace("\r", "\n"), where)
+            out += harvest_orgs(txt.encode("utf-8", "replace"), where)
             out += harvest_text(txt.encode("utf-8", "replace"), where)
     except Exception:
         pass
@@ -445,6 +501,8 @@ def harvest(where: str, data: bytes):
             out += harvest_iges(data, where)
         if kind not in ("zip", "pdf", "sw3d"):
             out += harvest_text(data, where)
+        if kind in ("text", "step", "iges") and len(data) < 50_000_000:
+            out += harvest_orgs(data, where)
     except Exception:
         pass
     return out
