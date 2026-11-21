@@ -74,7 +74,8 @@ class Registry:
             self.ids[(kind, k)] = ident
         elif ctx is not None:
             ident.ctx |= set(ctx)
-        ident.substr = ident.substr or substr
+        # matching inside larger words only for long, distinctive keys
+        ident.substr = (ident.substr or substr) and len(k) >= 6
         ident.sources += 1
         vs = set(variants or []) | {text}
         toks = [t for t in re.split(r"[\s_\-.]+", text) if t]
@@ -95,7 +96,7 @@ class Registry:
     def from_json(cls, path):
         r = cls()
         for d in json.load(open(path)):
-            i = Identity(d["kind"], d["key"], set(d["variants"]), set(d["ctx"]), d["substr"], d.get("sources", 0))
+            i = Identity(d["kind"], d["key"], set(d["variants"]), set(d["ctx"]), d["substr"] and len(d["key"]) >= 6, d.get("sources", 0))
             r.ids[(i.kind, i.key)] = i
         from . import pseudo
         pseudo.FORBIDDEN.update(k for (_, k) in r.ids)
