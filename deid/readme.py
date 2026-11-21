@@ -38,15 +38,15 @@ PSEUDONYMS
 ----------
 * One identity -> one pseudonym everywhere (paths, text, metadata, binary
   streams, archive members).  Pseudonyms are derived from a keyed hash of the
-  normalized identity, so "Tom Kramer", "Tom_Kramer", "TOM KRAMER" and
-  "tomkramer" all become the same pronounceable fake name with the same
+  normalized identity, so "Ann Example", "Ann_Example", "ANN EXAMPLE" and
+  "annexample" all become the same pronounceable fake name with the same
   separators and capitalization.  Different identities get different names.
 * A pseudonym has exactly the length of the original (letters->letters,
   digits->digits, punctuation kept).  This is what keeps binary CAD files
   valid: no offset, record length, fixed IGES column or stream size moves.
 * Identity fields are never blanked: author/organization/company/designer
   fields keep a (pseudonymous) value.
-* Everyday words (e.g. an author called "map") are pseudonymized inside the
+* Everyday words used as an author name are pseudonymized inside the
   identity field where they were found, but not replaced as free text
   elsewhere, so engineering words, materials and units stay intact.
 
@@ -97,6 +97,14 @@ LIMITATIONS
 """
 
 
+KNOWN = {
+    "7z-rewrite-failed", "zip-rewrite-failed", "zip-open-failed", "gz-decode-failed", "Z-decode-failed",
+    "Z-recompress-failed", "rar-kept-binary-rewrite", "pdf-open-failed", "pdf-rewrite-failed", "ole-open-failed",
+    "ole-write-failed", "tar-open-failed", "defect-lockfile", "defect-vti", "defect-partial-download",
+    "defect-step-not-iso", "defect-step-is-zip", "defect-pdf-not-pdf", "bz2-decode-failed", "xz-decode-failed",
+}
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--log", required=True)
@@ -123,6 +131,13 @@ def main():
         for n in d.get("notes", []):
             if n == "duplicate":
                 continue
+            # notes of archive members start with the member's ORIGINAL name:
+            # never print that, keep only the known note code
+            codes = [c for c in n.split(":") if c in KNOWN or c.startswith(("sw3d-streams-kept", "large-file-streamed"))]
+            if not codes:
+                continue
+            defects[codes[0] if not codes[0].startswith("sw3d") else "sw3d-streams-kept"].append(d["np"])
+            continue
             tag = n.split(":")[-1] if ":" in n and not n.startswith(("7z", "zip", "gz", "Z", "pdf", "ole", "tar", "rar", "sw3d", "error", "fatal")) else n
             key = n.split(":")[0]
             if "!" in n.split(":")[0] or "#" in n.split(":")[0]:
@@ -164,7 +179,11 @@ def main():
             "defect-pdf-not-pdf": ".pdf file that is not a PDF in the source; raw bytes scanned and kept",
         }
         for key, paths in sorted(defects.items()):
-            label = names.get(key) or names.get(key.split(":")[0]) or key
+            label = names.get(key) or names.get(key.split(":")[0])
+            if key.startswith("large-file-streamed"):
+                label = "very large file processed in streaming mode (same-length replacement only)"
+            if label is None and not key.startswith("sw3d"):
+                continue
             if key.startswith("sw3d-streams-kept"):
                 label = "SolidWorks file where some internal streams could not be recompressed to their original size and were kept"
             f.write(f"\n{label} ({len(paths)}):\n")
