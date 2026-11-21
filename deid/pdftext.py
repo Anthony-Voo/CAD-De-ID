@@ -231,10 +231,11 @@ def _replace_text(text: str, reg: Registry) -> str:
 def rewrite_page_text(pdf, page_obj, reg: Registry, depth=0) -> int:
     """Rewrite text in a page or form XObject; returns number of changed ops.
 
-    Text is matched per text block (BT ... ET): names drawn by several Tj/TJ
-    operators (one word or even one glyph at a time, common in CAD exports)
-    are joined before matching, and each changed character is re-encoded
-    with the font of the operator that draws it."""
+    All text of the page is matched in drawing order: names drawn by several
+    Tj/TJ operators, even in separate BT blocks (one word, fragment or glyph
+    at a time, common in CAD exports), are joined before matching (a space is
+    put between two operators only where letters/digits meet), and each
+    changed character is re-encoded with the font of its own operator."""
     res = page_obj.get("/Resources")
     if res is None or depth > 4:
         return 0
@@ -261,7 +262,9 @@ def rewrite_page_text(pdf, page_obj, reg: Registry, depth=0) -> int:
             if prev is not None:
                 same_tj = prev[0] == oi
                 single = len(prev[4].strip()) <= 1 and len(t.strip()) <= 1
-                if not same_tj and not single:
+                pt, nt0 = prev[4], t
+                both_alnum = bool(pt) and bool(nt0) and pt[-1].isalnum() and nt0[0].isalnum()
+                if not same_tj and not single and both_alnum:
                     parts.append(" ")
                     pos += 1
             starts.append(pos)
@@ -292,13 +295,7 @@ def rewrite_page_text(pdf, page_obj, reg: Registry, depth=0) -> int:
 
     for oi, (operands, op) in enumerate(ops):
         opn = str(op)
-        if opn == "BT":
-            process(block)
-            block = []
-        elif opn == "ET":
-            process(block)
-            block = []
-        elif opn == "Tf" and operands:
+        if opn == "Tf" and operands:
             name = str(operands[0])
             if name not in codecs:
                 f = fonts.get(name)

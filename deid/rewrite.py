@@ -274,6 +274,16 @@ def rw_pdf(data: bytes, reg: Registry, where: str, notes: list):
         notes.append(f"pdf-open-failed")
         return rw_bin(data, reg)
     try:
+        npages = len(pdf.pages)
+    except Exception:
+        npages = 0
+    if npages == 0:
+        # damaged page tree: other readers may still recover the pages, a
+        # re-save would drop them -> same-length edit of the original bytes
+        pdf.close()
+        notes.append("pdf-open-failed")
+        return reg.replace(data, "text")[0] if formats.is_texty(data[:2048]) else rw_bin(data, reg)
+    try:
         # document info: identity fields get whole-value pseudonyms
         di = pdf.docinfo
         for key in list(di.keys()):
