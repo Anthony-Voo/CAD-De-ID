@@ -21,9 +21,12 @@ HOW TO RUN (reproduces this corpus exactly)
   bash code/pipeline.sh ./work                            # -> ./work/cleaned-corpus
 
   The pipeline is deterministic: pseudonyms are an HMAC of the normalized
-  identity under the key DEID_SECRET.  This attempt used the default key in
-  code/deid/pseudo.py, so the command above regenerates byte-identical files
-  (set DEID_SECRET to a private value for a fresh, unlinkable mapping).
+  identity under the key DEID_SECRET (this attempt used the default key in
+  code/deid/pseudo.py), so every identity gets the same pseudonym on every
+  run.  The identity list itself is rebuilt by the discovery pass; part of
+  this attempt's discovery ran with an earlier version of harvest.py, so a
+  fresh run can find a few more or fewer identities than this corpus used.
+  Set DEID_SECRET to a private value for a fresh, unlinkable mapping.
   pipeline.sh downloads the input from the Builders mirror, so it needs no
   local copy; on a machine with less than ~150 GB free use
   code/tools/drive2.sh, which processes, uploads and deletes ~30 GB chunks.
