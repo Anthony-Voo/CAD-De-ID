@@ -204,3 +204,27 @@ class Registry:
     def replace_str(self, s: str, ctx: str = "path") -> str:
         b, n = self.replace(s.encode("utf-8"), ctx)
         return b.decode("utf-8", "replace") if n else s
+
+
+class Overlay(Registry):
+    """Base registry plus a few per-file identities, without rebuilding the
+    base automatons."""
+
+    def __init__(self, base: Registry):
+        super().__init__()
+        self.base = base
+
+    def find(self, data: bytes, ctx: str):
+        a = self.base.find(data, ctx)
+        if not self.ids:
+            return a
+        b = Registry.find(self, data, ctx)
+        if not b:
+            return a
+        cands = sorted(a + b, key=lambda x: (x[0], -(x[1] - x[0])))
+        out, last = [], -1
+        for c in cands:
+            if c[0] >= last:
+                out.append(c)
+                last = c[1]
+        return out

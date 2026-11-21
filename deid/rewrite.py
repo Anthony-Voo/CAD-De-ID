@@ -103,8 +103,8 @@ def local_registry(reg: Registry, where: str, data: bytes):
     vals = {(k, clean(v)) for k, v, _ in found if v and not is_placeholder(clean(v))}
     if not vals:
         return reg, found
-    loc = Registry()
-    loc.ids = dict(reg.ids)
+    from .registry import Overlay
+    loc = Overlay(reg)
     for k, v in vals:
         if k == "email":
             local, dom = v.split("@", 1)
@@ -117,7 +117,7 @@ def local_registry(reg: Registry, where: str, data: bytes):
         if len(nk) < 2:
             continue
         ctx = ("path", "text", "bin") if len(v) >= 5 else ("path", "text")
-        if (k, nk) not in reg.ids:
+        if (k, nk) not in reg.ids or not reg.ids[(k, nk)].ctx:
             loc.add(k, v, ctx=ctx)
     return loc, found
 
@@ -568,7 +568,7 @@ def _gzip_like(orig: bytes, new: bytes, reg: Registry) -> bytes:
         e = orig.index(b"\0", p)
         fname = reg.replace(orig[p:e], "path")[0]
     mtime = struct.unpack_from("<I", orig, 4)[0]
-    co = zlib.compressobj(9, zlib.DEFLATED, -15)
+    co = zlib.compressobj(6, zlib.DEFLATED, -15)
     body = co.compress(new) + co.flush()
     hdr = b"\x1f\x8b\x08" + bytes([8 if fname else 0]) + struct.pack("<I", mtime) + b"\x02\xff" + (fname + b"\0" if fname else b"")
     return hdr + body + struct.pack("<II", zlib.crc32(new), len(new) & 0xFFFFFFFF)

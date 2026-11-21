@@ -157,7 +157,7 @@ def deflate_exact(raw: bytes, target: int):
     # shorter complete stream padded with zeros after its final block
     # (inflate stops at the final block and ignores trailing bytes)
     best = None
-    budget = 400 if len(raw) < 1 << 16 else 30
+    budget = 120 if len(raw) < 1 << 16 else 4
     tries = 0
     for level in (9, 8, 7, 6, 5, 4, 3, 2, 1):
         for strategy in (zlib.Z_DEFAULT_STRATEGY, zlib.Z_FILTERED):
@@ -183,10 +183,12 @@ def _deflate_exact_blocks(raw: bytes, target: int):
     Compress all but the last r bytes with a sync flush (non-final blocks),
     pad with empty stored blocks (5 bytes each), then a final stored block
     holding the last r bytes (5 + r bytes)."""
-    cache = {}
-    for level in (9, 6, 8, 7, 5, 4, 3, 2, 1):
-        for strategy in (zlib.Z_DEFAULT_STRATEGY, zlib.Z_FILTERED):
-            for r in range(0, min(len(raw), 64) + 1):
+    big = len(raw) > 1 << 16
+    levels = (9, 6) if big else (9, 6, 8, 7, 5, 4, 3, 2, 1)
+    strategies = (zlib.Z_DEFAULT_STRATEGY,) if big else (zlib.Z_DEFAULT_STRATEGY, zlib.Z_FILTERED)
+    for level in levels:
+        for strategy in strategies:
+            for r in range(0, min(len(raw), 6 if big else 40) + 1):
                 key = (level, strategy, r)
                 head = raw[:len(raw) - r]
                 co = zlib.compressobj(level, zlib.DEFLATED, -15, 9, strategy)
