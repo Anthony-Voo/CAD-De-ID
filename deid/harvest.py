@@ -228,9 +228,28 @@ def harvest_orgs(data: bytes, where: str):
     return out
 
 
+_PHONE_KW = re.compile(rb"Tel|TEL|tel|Phone|PHONE|phone|Fax|FAX|fax|Mob|MOB|mob|Cell|CELL|cell|T\xc3\xa9l|Handy|HANDY")
+
+
+def _phone_matches(data: bytes):
+    """PHONE_RE, but only tried where a label word occurs (a plain
+    case-insensitive scan of every byte is ~40x slower)."""
+    last = -1
+    for k in _PHONE_KW.finditer(data):
+        s = k.start()
+        if s < last:
+            continue
+        m = PHONE_RE.match(data, s)
+        if m is None and s > 0:
+            continue
+        if m:
+            last = m.end()
+            yield m
+
+
 def harvest_text(data: bytes, where: str):
     out = []
-    for m in PHONE_RE.finditer(data):
+    for m in _phone_matches(data):
         num = m.group(1).decode("latin-1").strip()
         if sum(c.isdigit() for c in num) >= 7:
             out.append(("phone", num, where))
