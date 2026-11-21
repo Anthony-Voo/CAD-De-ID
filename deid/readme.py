@@ -119,6 +119,8 @@ def main():
             empty.append(d["np"])
         md5s[d.get("md5in")].append(d["np"])
         for n in d.get("notes", []):
+            if n == "duplicate":
+                continue
             tag = n.split(":")[-1] if ":" in n and not n.startswith(("7z", "zip", "gz", "Z", "pdf", "ole", "tar", "rar", "sw3d", "error", "fatal")) else n
             key = n.split(":")[0]
             if "!" in n.split(":")[0] or "#" in n.split(":")[0]:
@@ -152,6 +154,12 @@ def main():
             "ole-open-failed": "OLE file that cannot be parsed (damaged in the source); raw bytes scanned",
             "ole-write-failed": "OLE file whose streams could not be written back; kept unchanged",
             "tar-open-failed": "invalid tar in the source; raw bytes scanned",
+            "defect-lockfile": "CAD/Office lock file (~$ prefix) in the source, not an engineering file; kept",
+            "defect-vti": "FrontPage _vti_cnf/_vti_pvt metadata stub in the source; kept",
+            "defect-partial-download": "truncated partial download (.resume-partial) in the source; kept",
+            "defect-step-not-iso": ".step/.stp file without an ISO-10303-21 header in the source; text-scrubbed and kept",
+            "defect-step-is-zip": ".step/.stp file that is actually a ZIP archive in the source; processed as zip and kept",
+            "defect-pdf-not-pdf": ".pdf file that is not a PDF in the source; raw bytes scanned and kept",
         }
         for key, paths in sorted(defects.items()):
             label = names.get(key) or names.get(key.split(":")[0]) or key

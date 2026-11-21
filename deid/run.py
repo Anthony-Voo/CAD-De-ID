@@ -32,6 +32,25 @@ def init(reg_path, out, local, pathmap):
     dinit(local)
 
 
+def source_defects(path, data):
+    out = []
+    name = path.rsplit("/", 1)[-1]
+    if name.startswith("~$"):
+        out.append("defect-lockfile")
+    if "/_vti_cnf/" in path or "/_vti_pvt/" in path:
+        out.append("defect-vti")
+    if name.endswith(".resume-partial"):
+        out.append("defect-partial-download")
+    from .formats import ext_of, sniff
+    e = ext_of(path)
+    k = sniff(path, data) if data else "empty"
+    if e in ("step", "stp") and data and k != "step":
+        out.append("defect-step-not-iso" if k in ("text", "bin") else f"defect-step-is-{k}")
+    if e == "pdf" and data and k != "pdf":
+        out.append("defect-pdf-not-pdf")
+    return out
+
+
 def work(row):
     path = row[0]
     newp = PATHMAP[path]
@@ -44,6 +63,7 @@ def work(row):
         new, notes = transform(path, data, REG)
     except Exception as e:
         new, notes = data, [f"fatal:{type(e).__name__}:{str(e)[:100]}"]
+    notes = source_defects(path, data) + notes
     dst = os.path.join(OUT, newp)
     os.makedirs(os.path.dirname(dst), exist_ok=True)
     tmp = dst + ".part~"
@@ -98,7 +118,20 @@ def main():
                     done.add(d["p"])
             except Exception:
                 pass
-    todo = [r for r in rows if r[0].startswith(a.prefix) and r[0] not in done]
+    from .formats import ext_of
+    groups = {}
+    for r in rows:
+        if r[2]:
+            groups.setdefault((r[2], r[1], ext_of(r[0])), []).append(r[0])
+    leader_of = {}
+    followers = {}
+    for g in groups.values():
+        if len(g) > 1:
+            followers[g[0]] = g[1:]
+            for f in g[1:]:
+                leader_of[f] = g[0]
+    todo = [r for r in rows if r[0].startswith(a.prefix) and r[0] not in leader_of
+            and (r[0] not in done or any(f not in done for f in followers.get(r[0], [])))]
     if a.limit:
         todo = todo[: a.limit]
     if a.budget_gb:
@@ -116,6 +149,21 @@ def main():
     with open(a.log, "a") as log, Pool(a.jobs, initializer=init, initargs=(a.registry, a.out, a.local, pm), maxtasksperchild=100) as pool:
         for i, res in enumerate(pool.imap_unordered(work, todo, chunksize=2)):
             log.write(json.dumps(res, ensure_ascii=False) + "\n")
+            if "err" not in res:
+                src = os.path.join(a.out, res["np"])
+                for f in followers.get(res["p"], []):
+                    dst = os.path.join(a.out, pm[f])
+                    os.makedirs(os.path.dirname(dst), exist_ok=True)
+                    if os.path.exists(dst):
+                        os.unlink(dst)
+                    try:
+                        os.link(src, dst)
+                    except OSError:
+                        import shutil
+                        shutil.copyfile(src, dst)
+                    log.write(json.dumps({"p": f, "np": pm[f], "n": res.get("n"), "m": res.get("m"),
+                                          "chg": res.get("chg"), "notes": ["duplicate"], "dup_of": res["np"],
+                                          "md5in": res.get("md5in")}, ensure_ascii=False) + "\n")
             nb += res.get("n", 0)
             if i % 1000 == 0:
                 log.flush()
