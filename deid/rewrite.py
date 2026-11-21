@@ -150,6 +150,9 @@ def rw_field_value(v: str) -> str:
         trail = part[len(lead) + len(core):]
         if core and not is_placeholder(clean(core)) and any(c.isalpha() for c in core):
             core = pseudo_text("id", norm_key(core), core)
+        elif core.isdigit() and len(core) >= 4:
+            # numeric account ids in identity fields (e.g. "13436", "hyd\\98609")
+            core = pseudo_text("id", "num:" + core, core)
         out.append(lead + core + trail)
     return "".join(out)
 
@@ -379,7 +382,34 @@ def _pdf_walk(obj, reg, pdf, notes, where, depth=0):
             d = obj
             typ = d.get("/Type")
             sub = d.get("/Subtype")
-            if sub == "/Image" or typ == "/XRef" or typ == "/ObjStm":
+            if sub == "/Image":
+                # JPEG images: clean EXIF/XMP/comment metadata (pixels untouched)
+                flt = d.get("/Filter")
+                names = [str(x) for x in flt] if isinstance(flt, pikepdf.Array) else [str(flt)] if flt is not None else []
+                if names and names[-1] == "/DCTDecode":
+                    try:
+                        jpg = d.read_raw_bytes()
+                        for fname in names[:-1]:
+                            if fname == "/ASCII85Decode":
+                                import base64
+                                s85 = re.sub(rb"\s+", b"", jpg)
+                                if s85.endswith(b"~>"):
+                                    s85 = s85[:-2]
+                                if s85.startswith(b"<~"):
+                                    s85 = s85[2:]
+                                jpg = base64.a85decode(s85)
+                            elif fname == "/FlateDecode":
+                                jpg = zlib.decompress(jpg)
+                            else:
+                                raise ValueError("unsupported image filter chain")
+                        if jpg[:2] == b"\xff\xd8":
+                            nj = rw_jpg(jpg, reg)
+                            if nj != jpg:
+                                d.write(nj, filter=pikepdf.Name.DCTDecode)
+                    except Exception:
+                        pass
+                return
+            if typ == "/XRef" or typ == "/ObjStm":
                 return
             if typ == "/EmbeddedFile" or typ == "/Metadata":
                 return  # handled separately

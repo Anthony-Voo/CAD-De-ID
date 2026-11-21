@@ -155,6 +155,55 @@ def sw3d_streams(data: bytes):
         yield name, zlib.decompress(data[po:po + c], -15)
 
 
+def _deflate_tails():
+    """Byte strings that end a byte-aligned (sync-flushed) deflate stream:
+    k empty non-final fixed-Huffman blocks followed by an empty final block
+    (fixed or stored).  Lengths cover every remainder mod 5."""
+    def build(k, final_stored):
+        bits = []
+        for _ in range(k):
+            bits += [0, 1, 0] + [0] * 7          # BFINAL=0, BTYPE=01, EOB (7 zero bits)
+        if final_stored:
+            bits += [1, 0, 0]                    # BFINAL=1, BTYPE=00
+            while len(bits) % 8:
+                bits.append(0)
+            out = bytearray()
+            for i in range(0, len(bits), 8):
+                out.append(sum(b << j for j, b in enumerate(bits[i:i + 8])))
+            return bytes(out) + b"\x00\x00\xff\xff"
+        bits += [1, 1, 0] + [0] * 7              # BFINAL=1, BTYPE=01, EOB
+        while len(bits) % 8:
+            bits.append(0)
+        out = bytearray()
+        for i in range(0, len(bits), 8):
+            out.append(sum(b << j for j, b in enumerate(bits[i:i + 8])))
+        return bytes(out)
+    tails = {}
+    for k in range(0, 6):
+        for st in (False, True):
+            t = build(k, st)
+            if zlib.decompressobj(-15).decompress(b"\x01\x00\x00\xff\xff"[:0] + b"\x00\x00\x00\xff\xff" + t) == b"":
+                tails.setdefault(len(t), t)
+    return tails
+
+
+_TAILS = None
+
+
+def _deflate_exact_one(raw: bytes, target: int):
+    """One level-9 compression; exact size via empty padding blocks."""
+    global _TAILS
+    if _TAILS is None:
+        _TAILS = _deflate_tails()
+    co = zlib.compressobj(9, zlib.DEFLATED, -15, 9)
+    body = co.compress(raw) + co.flush(zlib.Z_SYNC_FLUSH)
+    rem = target - len(body)
+    for tl in sorted(_TAILS):
+        if tl <= rem and (rem - tl) % 5 == 0:
+            return body + b"\x00\x00\x00\xff\xff" * ((rem - tl) // 5) + _TAILS[tl]
+    return None
+
+
 def _deflate_exact_fast(raw: bytes, target: int):
     """One compression per level: sync-flushed body + empty stored blocks as
     padding (5 bytes each) + an empty final block, either stored (5 bytes) or
@@ -172,9 +221,29 @@ def _deflate_exact_fast(raw: bytes, target: int):
 
 
 def deflate_exact(raw: bytes, target: int, allow_pad: bool = True):
+    out = _deflate_exact_one(raw, target)
+    if out is not None:
+        return out
     out = _deflate_exact_fast(raw, target)
     if out is not None:
         return out
+    # nothing compresses smaller than level 9: if even a sync-flushed level-9
+    # body does not fit, only a few level-9 variants (no flush) can, so skip
+    # the expensive searches below
+    co = zlib.compressobj(9, zlib.DEFLATED, -15, 9)
+    body9 = co.compress(raw) + co.flush(zlib.Z_SYNC_FLUSH)
+    if len(body9) + 2 > target:
+        best = None
+        for strategy in (zlib.Z_DEFAULT_STRATEGY, zlib.Z_FILTERED):
+            co = zlib.compressobj(9, zlib.DEFLATED, -15, 9, strategy)
+            c = co.compress(raw) + co.flush()
+            if len(c) == target:
+                return c
+            if len(c) < target and (best is None or len(c) > len(best)):
+                best = c
+        if best is not None and allow_pad:
+            return best + b"\x00" * (target - len(best))
+        return None
     out = _deflate_exact_blocks(raw, target)
     if out is not None:
         return out

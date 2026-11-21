@@ -139,16 +139,24 @@ class Registry:
             return self._auto[ctx]
         best = {True: {}, False: {}}
         for ident in self.ids.values():
+            u16_only = False
             if ctx not in ident.ctx:
-                continue
+                # text-context identities still apply to binary data, but only
+                # as UTF-16 text (how CAD programs store names in binaries)
+                if not (ctx == "bin" and "text" in ident.ctx):
+                    continue
+                u16_only = True
             for v in ident.variants:
                 nk = norm_key(v)
                 if len(nk) < 3:
                     continue
-                encs = ("utf-8", "utf-16-le")
+                encs = ("utf-16-le",) if u16_only else ("utf-8", "utf-16-le")
                 if ctx == "bin":
                     if len(v) < 5:
-                        if not ident.u16short:
+                        # short names in binary data only as UTF-16 text
+                        # (6-8 specific bytes: random data never matches),
+                        # for file-local values and for text-context identities
+                        if not (ident.u16short or ("text" in ident.ctx and len(nk) >= 3)):
                             continue
                         encs = ("utf-16-le",)
                     ci = len(v) >= 8
@@ -170,18 +178,22 @@ class Registry:
                         prev = best[ci].get(pat)
                         if prev is None or len(ident.key) > len(prev[1]):
                             best[ci][pat] = val
-        autos = {}
+        # one automaton over lower-cased data: case-insensitive patterns as
+        # they are, exact-case patterns verified against the original bytes
+        merged = {}
         for ci, d in best.items():
-            if not d:
-                autos[ci] = None
-                continue
-            A = ahocorasick.Automaton()
             for pat, val in d.items():
-                A.add_word(pat, val)
+                lp = pat.encode("latin-1").lower().decode("latin-1")
+                merged.setdefault(lp, []).append((val, None if ci else pat.encode("latin-1")))
+        if merged:
+            A = ahocorasick.Automaton()
+            for lp, vals in merged.items():
+                A.add_word(lp, vals)
             A.make_automaton()
-            autos[ci] = A
-        self._auto[ctx] = autos
-        return autos
+        else:
+            A = None
+        self._auto[ctx] = A
+        return A
 
     @staticmethod
     def _bounded(data, s, e, enc, substr):
@@ -202,11 +214,13 @@ class Registry:
                 return False
         return True
 
-    def find(self, data: bytes, ctx: str):
-        """Non-overlapping, leftmost-longest matches: list of (start, end, info)."""
+    def find(self, data: bytes, ctx: str, loose: bool = False):
+        """Non-overlapping, leftmost-longest matches: list of (start, end, info).
+        loose=True: identities of 6+ characters also match inside words
+        (text whose word spaces are lost, e.g. glyph-by-glyph PDF text)."""
         if not data:
             return []
-        autos = self.automaton(ctx)
+        A = self.automaton(ctx)
         cands = []
         if self.literals:
             L = self._literal_auto()
@@ -215,15 +229,17 @@ class Registry:
                     s, e = end - val[4] + 1, end + 1
                     if self._bounded(data, s, e, val[2], False):
                         cands.append((s, e, val))
-        for ci, A in autos.items():
-            if A is None:
-                continue
-            text = (data.lower() if ci else data).decode("latin-1")
-            for end, val in A.iter(text):
-                kind, key, enc, substr, ln = val
-                s, e = end - ln + 1, end + 1
-                if self._bounded(data, s, e, enc, substr):
-                    cands.append((s, e, val))
+        if A is not None:
+            text = data.lower().decode("latin-1")
+            for end, vals in A.iter(text):
+                for val, exact in vals:
+                    kind, key, enc, substr, ln = val
+                    s, e = end - ln + 1, end + 1
+                    if exact is not None and data[s:e] != exact:
+                        continue
+                    if self._bounded(data, s, e, enc, substr or (loose and len(key) >= 6)):
+                        cands.append((s, e, val))
+                        break
         if not cands:
             return []
         cands.sort(key=lambda x: (x[0], -(x[1] - x[0])))
@@ -234,8 +250,8 @@ class Registry:
                 last = c[1]
         return out
 
-    def replace(self, data: bytes, ctx: str, hits=None):
-        ms = self.find(data, ctx)
+    def replace(self, data: bytes, ctx: str, hits=None, loose: bool = False):
+        ms = self.find(data, ctx, loose) if loose else self.find(data, ctx)
         if not ms:
             return data, 0
         buf = bytearray(data)
@@ -261,11 +277,11 @@ class Overlay(Registry):
         super().__init__()
         self.base = base
 
-    def find(self, data: bytes, ctx: str):
-        a = self.base.find(data, ctx)
+    def find(self, data: bytes, ctx: str, loose: bool = False):
+        a = self.base.find(data, ctx, loose)
         if not self.ids:
             return a
-        b = Registry.find(self, data, ctx)
+        b = Registry.find(self, data, ctx, loose)
         if not b:
             return a
         cands = sorted(a + b, key=lambda x: (x[0], -(x[1] - x[0])))
