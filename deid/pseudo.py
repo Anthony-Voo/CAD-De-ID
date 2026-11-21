@@ -93,13 +93,29 @@ def pseudo_text(kind: str, key: str, original: str) -> str:
             out.append(c)
     res = "".join(out)
     tries = 0
-    while FORBIDDEN and tries < 8 and len(norm_key(res)) >= 3 and norm_key(res) in FORBIDDEN and norm_key(res) != key:
+    while FORBIDDEN and tries < 8 and _collides(res, key):
         tries += 1
         res = pseudo_text_salted(key + "#" + str(tries), original)
     if res.lower() == original.lower() and original:
         # practically impossible; perturb deterministically
         res = res[:-1] + ("x" if res[-1] != "x" else "q")
     return res
+
+
+_TOKEN_RE = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|\d+")
+
+
+def _collides(res: str, key: str) -> bool:
+    """A pseudonym must not spell a real identity, as a whole or as one of
+    its word pieces (split on punctuation and camelCase), e.g. "VibiCEB"."""
+    whole = norm_key(res)
+    if len(whole) >= 3 and whole in FORBIDDEN and whole != key:
+        return True
+    for t in _TOKEN_RE.findall(res):
+        t = t.lower()
+        if len(t) >= 3 and t in FORBIDDEN and t != key:
+            return True
+    return False
 
 
 def pseudo_text_salted(key: str, original: str) -> str:

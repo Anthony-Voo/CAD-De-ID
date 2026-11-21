@@ -132,7 +132,7 @@ def add_domain(reg: Registry, dom: str, ctx=ALL):
         return
     reg.add("domain", dom, ctx=ctx, substr=True)
     for lab in domain_labels(dom):
-        if lab in SOFTWARE:
+        if lab in SOFTWARE or "pdf" in lab:
             continue
         reg.add("domain", lab, ctx=ctx if len(lab) >= 4 else ("path", "text"))
 

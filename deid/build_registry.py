@@ -100,6 +100,28 @@ def main():
     for (kind, key) in list(reg.ids):
         if key in exts and kind in ("domain", "account", "project", "person", "org"):
             reg.ids.pop((kind, key))
+    # harvested values that are really part / file names, placeholders or junk
+    import os as _os
+    stems = set()
+    for p in paths:
+        base = p.rsplit("/", 1)[-1]
+        stems.add(norm_key(base.split(".")[0]))
+    GENERIC_VALUES = {"unspecified", "untitled", "unnamed", "sanstitre", "sintitulo", "ohnetitel", "senzatitolo",
+                      "notspecified", "nonspecifie", "nichtangegeben", "default", "custom", "standard", "generic"}
+    dropped = 0
+    for (kind, key), ident in list(reg.ids.items()):
+        if kind == "domain" and any(re.search(r"\.(pdf|step|stp|sldprt|dwg|dxf|stl|png|jpg|zip|txt|xml|html?)$", v, re.I) for v in ident.variants):
+            reg.ids.pop((kind, key))
+            dropped += 1
+            continue
+        if key in curated_keys or kind not in ("person", "account", "org", "host"):
+            continue
+        vs = list(ident.variants)
+        if (key in stems and len(key) >= 6 and re.search(r"\d|_", " ".join(vs))) or key in GENERIC_VALUES \
+                or len(set(key)) <= 2 or any(re.search(r"\.(pdf|step|stp|sldprt|sldasm|slddrw|dwg|dxf|igs|iges|stl|png|jpg|zip)$", v, re.I) for v in vs):
+            reg.ids.pop((kind, key))
+            dropped += 1
+    print(f"dropped {dropped} part-name/placeholder/junk values")
     # demote everyday words: they are only replaced inside known identity
     # fields (handled per file), never as free text
     demoted = []
