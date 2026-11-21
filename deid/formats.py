@@ -155,7 +155,26 @@ def sw3d_streams(data: bytes):
         yield name, zlib.decompress(data[po:po + c], -15)
 
 
+def _deflate_exact_fast(raw: bytes, target: int):
+    """One compression per level: sync-flushed body + empty stored blocks as
+    padding (5 bytes each) + an empty final block, either stored (5 bytes) or
+    fixed-Huffman (2 bytes, 03 00).  Covers remainders 0 and 2 (mod 5)."""
+    for level in (9, 8, 7, 6, 5, 4, 3, 2, 1):
+        co = zlib.compressobj(level, zlib.DEFLATED, -15, 9)
+        body = co.compress(raw) + co.flush(zlib.Z_SYNC_FLUSH)
+        for fin in (b"\x01\x00\x00\xff\xff", b"\x03\x00"):
+            rem = target - len(body) - len(fin)
+            if rem >= 0 and rem % 5 == 0:
+                return body + b"\x00\x00\x00\xff\xff" * (rem // 5) + fin
+        if len(body) + 2 > target:
+            break  # lower levels only get bigger
+    return None
+
+
 def deflate_exact(raw: bytes, target: int):
+    out = _deflate_exact_fast(raw, target)
+    if out is not None:
+        return out
     out = _deflate_exact_blocks(raw, target)
     if out is not None:
         return out
