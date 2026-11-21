@@ -251,18 +251,25 @@ def main():
                 break
             pending = retry
         log.flush()
-        # large files: two at a time, one task per worker process
-        for r in big:
-            try:
-                with ProcessPoolExecutor(1, initializer=init, initargs=(a.registry, a.out, a.local, pm, 10.0)) as ex:
-                    res = ex.submit(work, r).result()
-                if res.get("err") == "memory":
-                    res = stream_fallback(r, a, pm, reg, "memory")
-            except Exception as e:
-                res = stream_fallback(r, a, pm, reg, f"{type(e).__name__}")
-            record(log, res)
-            log.flush()
-            print(f"large {r[0][-60:]} {int(r[1])/1e6:.0f} MB done {time.time()-t0:.0f}s", flush=True)
+        # large files: three at a time, one task per worker process, each
+        # capped at 4.5 GB; a capped/crashed one is streamed instead
+        if big:
+            with ProcessPoolExecutor(3, initializer=init, initargs=(a.registry, a.out, a.local, pm, 4.5),
+                                     max_tasks_per_child=1) as ex:
+                futs = {ex.submit(work, r): r for r in big}
+                for f in as_completed(futs):
+                    r = futs[f]
+                    try:
+                        res = f.result()
+                        if res.get("err") == "memory":
+                            res = stream_fallback(r, a, pm, reg, "memory")
+                    except Exception as e:
+                        res = None
+                    if res is None:
+                        res = stream_fallback(r, a, pm, reg, "worker-crash")
+                    record(log, res)
+                    log.flush()
+                    print(f"large {r[0][-60:]} {int(r[1])/1e6:.0f} MB done {time.time()-t0:.0f}s", flush=True)
     print("done", flush=True)
 
 
