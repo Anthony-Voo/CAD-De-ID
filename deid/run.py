@@ -24,8 +24,14 @@ OUT = None
 PATHMAP = None
 
 
-def init(reg_path, out, local, pathmap):
+def init(reg_path, out, local, pathmap, mem_gb=2.0):
     global REG, OUT, PATHMAP
+    try:
+        import resource
+        lim = int(mem_gb * (1 << 30))
+        resource.setrlimit(resource.RLIMIT_AS, (lim, lim))
+    except Exception:
+        pass
     REG = Registry.from_json(reg_path)
     OUT = out
     PATHMAP = pathmap
@@ -61,8 +67,12 @@ def work(row):
         return {"p": path, "np": newp, "err": "fetch:" + str(e)[:200]}
     try:
         new, notes = transform(path, data, REG)
+    except MemoryError:
+        return {"p": path, "np": newp, "err": "memory"}
     except Exception as e:
         new, notes = data, [f"fatal:{type(e).__name__}:{str(e)[:100]}"]
+    if any("MemoryError" in n for n in notes):
+        return {"p": path, "np": newp, "err": "memory"}
     notes = source_defects(path, data) + notes
     dst = os.path.join(OUT, newp)
     os.makedirs(os.path.dirname(dst), exist_ok=True)
@@ -182,8 +192,8 @@ def main():
             sel.append(r)
             tot += int(r[1])
         todo = sel
-    big = [r for r in todo if int(r[1]) > 150_000_000]
-    small = [r for r in todo if int(r[1]) <= 150_000_000]
+    big = [r for r in todo if int(r[1]) > 60_000_000]
+    small = [r for r in todo if int(r[1]) <= 60_000_000]
     print(f"{len(todo)} to do ({len(big)} large), {len(done)} done", flush=True)
     t0 = time.time()
     nb = 0
@@ -222,7 +232,11 @@ def main():
                 futs = {ex.submit(work, r): r for r in pending}
                 for i, f in enumerate(as_completed(futs)):
                     try:
-                        record(log, f.result())
+                        res = f.result()
+                        if res.get("err") == "memory":
+                            big.append(futs[f])
+                        else:
+                            record(log, res)
                     except BrokenProcessPool:
                         retry.append(futs[f])
                     except Exception as e:
@@ -240,8 +254,10 @@ def main():
         # large files: two at a time, one task per worker process
         for r in big:
             try:
-                with ProcessPoolExecutor(1, initializer=init, initargs=(a.registry, a.out, a.local, pm)) as ex:
+                with ProcessPoolExecutor(1, initializer=init, initargs=(a.registry, a.out, a.local, pm, 10.0)) as ex:
                     res = ex.submit(work, r).result()
+                if res.get("err") == "memory":
+                    res = stream_fallback(r, a, pm, reg, "memory")
             except Exception as e:
                 res = stream_fallback(r, a, pm, reg, f"{type(e).__name__}")
             record(log, res)
