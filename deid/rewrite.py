@@ -206,6 +206,12 @@ def rw_ole(data: bytes, reg: Registry, where: str, notes: list):
                 else:
                     nb[d["start"]:d["end"]] = reg.replace(span, "text")[0]
             new = bytes(nb)
+        elif name.endswith("__ZLB") and len(raw) < 64 << 20:
+            def _fn(d, _xml=name.startswith("swXml") or "KeyWords" in name):
+                return reg.replace(d, "text" if _xml else "bin")[0]
+            new, nfail = formats.zlb_rewrite(raw, _fn)
+            if nfail:
+                notes.append(f"zlb-blocks-kept:{nfail}")
         elif len(raw) < 64 << 20:
             new = reg.replace(raw, "bin")[0]
         if new is not None and new != raw:
@@ -233,6 +239,17 @@ def rw_ole(data: bytes, reg: Registry, where: str, notes: list):
     # same-length pass over the whole file (allocated streams are already clean).
     if out is not data:
         out = reg.replace(out, "bin")[0]
+    wiped, nz = formats.ole_wipe_unused(out)
+    if nz:
+        # keep the result only if every stream still reads back identically
+        try:
+            import olefile as _of
+            a, b = _of.OleFileIO(io.BytesIO(out)), _of.OleFileIO(io.BytesIO(wiped))
+            same = all(a.openstream(s).read() == b.openstream(s).read() for s in a.listdir())
+        except Exception:
+            same = False
+        if same:
+            out = wiped
     return out
 
 

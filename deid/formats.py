@@ -171,13 +171,15 @@ def _deflate_exact_fast(raw: bytes, target: int):
     return None
 
 
-def deflate_exact(raw: bytes, target: int):
+def deflate_exact(raw: bytes, target: int, allow_pad: bool = True):
     out = _deflate_exact_fast(raw, target)
     if out is not None:
         return out
     out = _deflate_exact_blocks(raw, target)
     if out is not None:
         return out
+    if not allow_pad:
+        return None
     # search encoder parameters for an exact size, then fall back to a
     # shorter complete stream padded with zeros after its final block
     # (inflate stops at the final block and ignores trailing bytes)
@@ -271,3 +273,101 @@ def sevenzip_members(data: bytes):
                 p = os.path.join(root, f)
                 with open(p, "rb") as fh:
                     yield (os.path.relpath(p, td).replace(os.sep, "/"), fh.read())
+
+
+# ------------------------------------------------- SolidWorks (<2015) __ZLB
+ZLB_SIG_LEN = 16
+
+
+def zlb_rewrite(raw: bytes, fn):
+    """Rewrite a SolidWorks '..__ZLB' OLE stream in place.
+
+    Layout: 16-byte signature, then blocks [u32 size][u32 csize][zlib data],
+    ending with a zero block.  fn(bytes) -> same-length bytes is applied to
+    each decompressed block, which is then recompressed to exactly csize
+    (zlib header kept, Adler-32 recomputed).  Returns (new_raw, failed)."""
+    if len(raw) < ZLB_SIG_LEN + 8:
+        return raw, 0
+    buf = bytearray(raw)
+    p = ZLB_SIG_LEN
+    failed = 0
+    while p + 8 <= len(raw):
+        u, c = struct.unpack_from("<II", raw, p)
+        if u == 0 and c == 0:
+            break
+        z = raw[p + 8:p + 8 + c]
+        if c < 6 or len(z) != c:
+            break
+        try:
+            d = zlib.decompress(z)
+        except zlib.error:
+            break
+        if len(d) != u:
+            break
+        nd = fn(d)
+        if nd != d and len(nd) == len(d):
+            body = deflate_exact(nd, c - 6, allow_pad=False)
+            if body is not None and len(body) == c - 6:
+                newz = z[:2] + body + struct.pack(">I", zlib.adler32(nd) & 0xFFFFFFFF)
+                try:
+                    good = zlib.decompress(newz) == nd
+                except zlib.error:
+                    good = False
+                if good:
+                    buf[p + 8:p + 8 + c] = newz
+                else:
+                    failed += 1
+            else:
+                failed += 1
+        p += 8 + c
+    return bytes(buf), failed
+
+
+# ------------------------------------------------------ OLE unused areas
+def ole_wipe_unused(data: bytes):
+    """Zero the unallocated sectors of an OLE compound file and the slack
+    after the end of every regular stream (bytes nobody reads, but which can
+    keep old names from earlier saves).  Structure and sizes are unchanged.
+    Returns (new_data, bytes_zeroed)."""
+    import olefile
+    try:
+        o = olefile.OleFileIO(io.BytesIO(data))
+    except Exception:
+        return data, 0
+    ss = o.sectorsize
+    FREE = 0xFFFFFFFF
+    buf = bytearray(data)
+    zeroed = 0
+    nsec = (len(data) - ss) // ss
+    try:
+        for i, nxt in enumerate(o.fat[:nsec]):
+            if nxt == FREE:
+                a = (i + 1) * ss
+                if a + ss <= len(buf) and any(buf[a:a + ss]):
+                    buf[a:a + ss] = bytes(ss)
+                    zeroed += ss
+        # slack at the end of regular (non-mini) streams
+        for e in o.direntries:
+            if e is None or e.entry_type not in (2, 5) or e.size < o.minisectorcutoff and e.entry_type == 2:
+                continue
+            size = e.size if e.entry_type == 2 else (len(o.ministream) if hasattr(o, "ministream") and o.ministream else 0)
+            if e.entry_type == 5:
+                continue
+            sect, chain = e.isectStart, []
+            while sect not in (0xFFFFFFFE, FREE) and sect < len(o.fat) and len(chain) <= nsec:
+                chain.append(sect)
+                sect = o.fat[sect]
+            if not chain:
+                continue
+            used_in_last = size - (len(chain) - 1) * ss
+            if 0 < used_in_last < ss:
+                a = (chain[-1] + 1) * ss + used_in_last
+                b = (chain[-1] + 1) * ss + ss
+                if b <= len(buf) and any(buf[a:b]):
+                    buf[a:b] = bytes(b - a)
+                    zeroed += b - a
+    except Exception:
+        return data, 0
+    finally:
+        o.close()
+    return bytes(buf), zeroed
