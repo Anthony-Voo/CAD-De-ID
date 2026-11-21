@@ -116,9 +116,19 @@ def domain_labels(dom: str):
     return [l for l in labs if l and l not in DOMAIN_KEEP and not l.isdigit()]
 
 
+REAL_TLDS = set("""com org net edu gov mil int io dev info biz co me uk de fr it es nl ch at be cn jp ru in ca au us eu dk se
+no fi pl cz pt br mx ar tr kr tw hk sg il ir gr hu ro si sk lu ie nz za ua by kz th my id vn ph pk bd lk np
+ae sa eg ma ng ke tz cl pe uy ve ec bo py cr cu gt hn ni pa do pr is ee lv lt hr rs ba mk al bg cy mt
+xyz app ai tech online site store shop cloud page blog wiki network systems solutions works studio design
+engineering science global world one top club live news media space website""".split())
+PLATFORM_DOMAINS = {"github.com", "gitlab.com", "githubusercontent.com", "github.io", "bitbucket.org"}
+
+
 def add_domain(reg: Registry, dom: str, ctx=ALL):
     dom = dom.strip(".").lower()
-    if "." not in dom:
+    if "." not in dom or dom.rsplit(".", 1)[-1] not in REAL_TLDS:
+        return
+    if dom in PLATFORM_DOMAINS or any(dom.endswith("." + p) for p in PLATFORM_DOMAINS):
         return
     reg.add("domain", dom, ctx=ctx, substr=True)
     for lab in domain_labels(dom):
@@ -173,7 +183,6 @@ def build_seed_registry(manifest_paths) -> Registry:
             add_project(reg, r)
         elif kind == "gitlab":
             host, *rest = seg.split("__")
-            add_domain(reg, host)
             rest = [x for x in rest if x]
             if rest:
                 add_account(reg, rest[0])

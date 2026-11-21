@@ -91,7 +91,8 @@ NS_DOMAINS = re.compile(
     r"dassault|3ds\.com|onshape\.com|cairographics|libreoffice|openoffice|github\.com|gitlab\.com|"
     r"wikipedia\.org|youtube\.com|python\.org|mozilla|apple\.com|java\.com|oracle\.com|sun\.com|"
     r"sourceforge\.net|amazon\.com|cloudfront\.net|dropbox|wordpress\.com|wp\.com|jquery|bootstrap|"
-    r"fonts\.|cdn\.|localhost)",
+    r"fonts\.|cdn\.|localhost|iec\.ch|color\.org|aiim\.org|npes\.org|dublincore\.org|schema\.org|spdx\.org|"
+    r"json-schema\.org|xfa\.org|pdfa\.org|iso\.ch|ansi\.org|din\.de|w3c|unicode\.org|ecma)",
     re.I,
 )
 
@@ -101,8 +102,20 @@ def clean(v: str) -> str:
     return re.sub(r"\s+", " ", v)
 
 
+VENDORS = re.compile(
+    r"\b(apple|hewlett|packard|\bhp\b|microsoft|adobe|monotype|linotype|bitstream|urw|google|ibm|"
+    r"sun microsystems|international color consortium|kodak|agfa|canon|epson|xerox|corel|autodesk|dassault|"
+    r"siemens|ptc|parametric technology|ricoh|lexmark|brother|fujifilm|eastman|x-rite|gretag|unicode|"
+    r"free software foundation|gnu|apache|mozilla|ghostscript|artifex|matra|datavision|open cascade|"
+    r"elsevier|springer|wiley|ieee|creative commons|tracepart|cadenas|3d ?content ?central|grabcad)\b",
+    re.I,
+)
+
+
 def is_placeholder(v: str) -> bool:
     lo = v.lower().strip()
+    if VENDORS.search(lo):
+        return True
     if lo in PLACEHOLDER or len(re.sub(r"[^A-Za-z]", "", lo)) < 2:
         return True
     if re.fullmatch(r"[\d\W_]+", lo):

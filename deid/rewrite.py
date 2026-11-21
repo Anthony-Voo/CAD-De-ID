@@ -168,7 +168,8 @@ def rw_ole(data: bytes, reg: Registry, where: str, notes: list):
             changes.append((s, new))
     o.close()
     if not changes:
-        return data
+        # free sectors / slack can still hold old names
+        return reg.replace(data, "bin")[0]
     import tempfile, os
     with tempfile.NamedTemporaryFile(delete=False) as tf:
         tf.write(data)
@@ -184,7 +185,10 @@ def rw_ole(data: bytes, reg: Registry, where: str, notes: list):
         out = data
     finally:
         os.unlink(tmp)
-    # directory entry names may also hold identifiers (rare): leave them.
+    # Unallocated sectors and slack keep remnants of earlier saves: one more
+    # same-length pass over the whole file (allocated streams are already clean).
+    if out is not data:
+        out = reg.replace(out, "bin")[0]
     return out
 
 
@@ -304,19 +308,31 @@ def _pdf_walk(obj, reg, pdf, notes, where, depth=0):
             d = obj
             typ = d.get("/Type")
             sub = d.get("/Subtype")
-            if sub == "/Image" or typ == "/XRef" or typ == "/ObjStm" or "/FontFile" in str(d.keys()):
+            if sub == "/Image" or typ == "/XRef" or typ == "/ObjStm":
                 return
             if typ == "/EmbeddedFile" or typ == "/Metadata":
                 return  # handled separately
-            if d.get("/Length1") is not None or sub in ("/Type1C", "/CIDFontType0C", "/OpenType"):
-                return  # font programs
+            if d.get("/Length1") is not None or sub in ("/Type1C", "/CIDFontType0C", "/OpenType") or typ == "/FontFile":
+                # embedded font programs: only the conservative binary pass
+                # (font names such as "<Org>Font-Regular"), same length
+                try:
+                    raw = d.read_bytes()
+                except Exception:
+                    return
+                new = reg.replace(raw, "bin")[0]
+                if new != raw:
+                    d.write(new)
+                return
             try:
                 raw = d.read_bytes()
             except Exception:
                 return
             if len(raw) > 64 << 20:
                 return
-            new = _rw_content(raw, reg)
+            if formats.is_texty(raw):
+                new = _rw_content(raw, reg)
+            else:
+                new = reg.replace(raw, "bin")[0]
             if new != raw:
                 d.write(new)
             for k in list(d.keys()):
@@ -324,6 +340,14 @@ def _pdf_walk(obj, reg, pdf, notes, where, depth=0):
         elif isinstance(obj, pikepdf.Dictionary):
             for k in list(obj.keys()):
                 v = obj[k]
+                if isinstance(v, pikepdf.Name) and k in ("/BaseFont", "/FontName", "/FontFamily", "/Title"):
+                    nm = str(v)[1:].encode("latin-1", "replace")
+                    nn = reg.replace(nm, "bin")[0]
+                    if nn == nm:
+                        nn = reg.replace(nm, "text")[0]
+                    if nn != nm:
+                        obj[k] = pikepdf.Name("/" + nn.decode("latin-1"))
+                    continue
                 if isinstance(v, pikepdf.String):
                     b = bytes(v)
                     nb = reg.replace(b, "text")[0]

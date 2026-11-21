@@ -93,6 +93,13 @@ def main():
         ctx = ("path", "text", "bin") if len(v) >= 5 else ("path", "text")
         reg.add(k, v, ctx=ctx)
 
+    # never treat a file-format keyword or extension used in the corpus as an identity
+    from .formats import ext_of
+    exts = {norm_key(ext_of(p)) for p in paths}
+    exts |= {"kicadpcb", "kicadsch", "kicadmod", "kicadpro", "sldprt", "sldasm", "slddrw", "fcstd", "step", "iges"}
+    for (kind, key) in list(reg.ids):
+        if key in exts and kind in ("domain", "account", "project", "person", "org"):
+            reg.ids.pop((kind, key))
     # demote everyday words: they are only replaced inside known identity
     # fields (handled per file), never as free text
     demoted = []
