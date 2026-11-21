@@ -100,6 +100,7 @@ CURATED = [
     # project codes used in part numbers
     ("code", "rc_iit", ALL), ("code", "rc_tlr", ALL), ("code", "rc_usal", ALL), ("code", "TLR", ("path", "text")),
     ("code", "usal", ("path", "text")), ("code", "TA00", ("path", "text")),
+    ("code", "TRL", ("path", "text")), ("code", "ECUB", ("path", "text")),
 ]
 
 
@@ -154,10 +155,21 @@ def add_project(reg: Registry, repo: str):
     reg.add("project", repo, ctx=ALL if distinctive else ("path",))
 
 
+LIGO_HINT = re.compile(r"ligo|omcs|topmass|hlts|validate_ligo|dcc", re.I)
+DCC_RE = re.compile(r"(?<![A-Za-z0-9])([DETFLGMQ]\d{6,7})(?![0-9])")
+
+
 def build_seed_registry(manifest_paths) -> Registry:
     reg = Registry()
     for kind, text, ctx in CURATED:
         reg.add(kind, text, ctx=ctx)
+    # LIGO document-control numbers (D0900445, E080191, ...): public document
+    # identifiers of one organization; the letter is kept, the digits get a
+    # consistent pseudonym everywhere (paths, PDF title blocks, STEP names)
+    for p in manifest_paths:
+        if LIGO_HINT.search(p):
+            for m in DCC_RE.findall(p):
+                reg.add("code", m, ctx=("path", "text", "bin"))
     seen = set()
     for p in manifest_paths:
         a = p.split("/")
