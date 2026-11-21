@@ -139,16 +139,24 @@ class Registry:
             return self._auto[ctx]
         best = {True: {}, False: {}}
         for ident in self.ids.values():
+            u16_only = False
             if ctx not in ident.ctx:
-                continue
+                # text-context identities still apply to binary data, but only
+                # as UTF-16 text (how CAD programs store names in binaries)
+                if not (ctx == "bin" and "text" in ident.ctx):
+                    continue
+                u16_only = True
             for v in ident.variants:
                 nk = norm_key(v)
                 if len(nk) < 3:
                     continue
-                encs = ("utf-8", "utf-16-le")
+                encs = ("utf-16-le",) if u16_only else ("utf-8", "utf-16-le")
                 if ctx == "bin":
                     if len(v) < 5:
-                        if not ident.u16short:
+                        # short names in binary data only as UTF-16 text
+                        # (6-8 specific bytes: random data never matches),
+                        # for file-local values and for text-context identities
+                        if not (ident.u16short or ("text" in ident.ctx and len(nk) >= 3)):
                             continue
                         encs = ("utf-16-le",)
                     ci = len(v) >= 8
