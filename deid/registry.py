@@ -114,6 +114,8 @@ class Registry:
                 continue
             for v in ident.variants:
                 nk = norm_key(v)
+                if len(nk) < 3:
+                    continue
                 if ctx == "bin":
                     if len(v) < 5:
                         continue

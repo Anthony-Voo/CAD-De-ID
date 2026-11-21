@@ -71,7 +71,11 @@ CURATED = [
     ("person", "Dominique Lachiver", ALL), ("person", "Maximilian Behm", ALL), ("person", "Maxwell Lohss", ALL),
     ("person", "Tom Kramer", ALL), ("person", "Keith Bucklitch", ALL), ("person", "Ulrich Rapp", ALL),
     ("person", "U.Rapp", ALL), ("person", "Fabian Voigt", ALL), ("person", "Andrew Marles", ALL),
-    ("person", "Gerhart Zimmermann", ALL),
+    ("person", "Gerhart Zimmermann", ALL), ("person", "Manfred Osti", ALL), ("person", "Pete Brown", ALL),
+    ("person", "Randy Wilson", ALL), ("person", "Sanjeev Trika", ALL), ("person", "Bill Regli", ALL),
+    ("person", "William Regli", ALL), ("person", "Regli", ALL), ("person", "Cicirello", ALL),
+    ("person", "Daniel Lapadat", ALL), ("person", "Lapadat", ALL), ("org", "Heriot Watt", ALL),
+    ("org", "Heriot-Watt University", ALL), ("org", "Drexel University", ALL),
     # projects / product lines / codenames
     ("project", "Pipettin", ALL), ("project", "pipettin-bot", ALL), ("project", "OpenSourceLeg", ALL),
     ("project", "Open Source Leg", ALL), ("project", "LOCILAMP", ALL), ("project", "ThrowBot", ALL),
