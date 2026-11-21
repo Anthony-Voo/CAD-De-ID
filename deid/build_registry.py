@@ -19,6 +19,10 @@ try:
 except ImportError:  # pragma: no cover
     zipf_frequency = None
 
+TECH_WORDS = {"cad", "cam", "cae", "fea", "cnc", "pcb", "stl", "step", "dxf", "dwg", "pdf", "3d", "2d", "solidworks",
+              "freecad", "inventor", "fusion", "catia", "onshape", "kicad", "openscad", "sw", "asm", "assy", "drw",
+              "files", "models", "parts", "drawings", "design", "project", "projects", "practice", "exercises",
+              "tutorials", "lab", "labs", "portfolio", "library", "main", "master", "v1", "v2", "v3", "hw", "mech"}
 LANGS = ("en", "fr", "de", "es", "it", "pt", "nl")
 COMMON = 3.3  # zipf >= 3.3: an everyday word in some language
 
@@ -36,6 +40,13 @@ def is_common_single(v: str) -> bool:
     if not toks or len(toks) > 4:
         return False
     return all(commonness(t) >= COMMON for t in toks)
+
+
+def is_tech_phrase(v: str) -> bool:
+    """Repository-style names made only of CAD/software words ("CAD-DRAWINGS",
+    "3d_models"): generic, never identifying inside file content."""
+    toks = [t.lower() for t in re.split(r"[\s_\-.,&()]+", v) if t]
+    return len(toks) >= 1 and all(t in TECH_WORDS or t in SOFTWARE or t.isdigit() for t in toks)
 
 
 def main():
@@ -131,7 +142,8 @@ def main():
         if kind in ("email",):
             continue
         vs = [v for v in ident.variants]
-        if key in SOFTWARE or all(is_common_single(v) for v in vs):
+        most_split = max(vs, key=lambda v: len([t for t in re.split(r"[\s_\-.,&()]+", v) if t]))
+        if key in SOFTWARE or all(is_common_single(v) for v in vs) or (kind == "project" and is_tech_phrase(most_split) and key not in ("stepparts",)):
             if "path" in ident.ctx and kind in ("account", "project") and key not in SOFTWARE:
                 # owner/repo position is handled structurally; keep path ctx only
                 ident.ctx = set()

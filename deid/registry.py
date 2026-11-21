@@ -190,8 +190,13 @@ class Registry:
         step = 2 if enc == "utf-16-le" else 1
         cf, cl = _cls(data[s]), _cls(data[e - step])
         if s - step >= 0 and (step == 1 or data[s - 1] == 0):
-            if _joins(_cls(data[s - step]), cf):
-                return False
+            pc = _cls(data[s - step])
+            if _joins(pc, cf):
+                # "DRAWNBrit": an all-caps run followed by a capitalized word
+                # (capital + lower case) is a word boundary (as in XMLParser)
+                second = _cls(data[s + step]) if s + step < e else "O"
+                if not (pc == "U" and cf == "U" and second == "L"):
+                    return False
         if e + step <= len(data) and (step == 1 or data[e + 1] == 0):
             if _joins(cl, _cls(data[e])):
                 return False
