@@ -89,6 +89,11 @@ def sniff(path: str, data: bytes) -> str:
 def ole_field_kind(d) -> str | None:
     """Classify an OLE string property as person / org / account / None."""
     f, pid, name = d["fmtid"], d["pid"], (d["name"] or "").lower()
+    if name and re.search(r"date|datum|fecha|\bdata\b|time|zeit|heure|uhrzeit|jour|tag\b|format|size|scale|"
+                          r"revision|\brev\b|version|number|nummer|numero|qty|quantity|mass|masse|weight|material|"
+                          r"finish|unit|density|cost|price|status|description|beschreibung|titel|title|"
+                          r"keywords|comments|subject", name):
+        return None
     if f in (FMTID_SUMMARY, "3D38DE39-AA30-11D1-9C00-0060B03C1CA6") or f.startswith("3D38DE39"):
         if pid in (4, 8):
             return "person"

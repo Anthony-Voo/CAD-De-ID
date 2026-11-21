@@ -112,9 +112,23 @@ VENDORS = re.compile(
 )
 
 
+DATE_LIKE = re.compile(
+    r"\d{1,2}:\d{2}|\b(19|20)\d{2}\b|\b\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b|"
+    r"\b(jan|january|feb|february|mar|march|apr|april|may|jun|june|jul|july|aug|august|sep|sept|september|"
+    r"oct|october|nov|november|dec|december)\b|"
+    r"\b(janvier|février|mars|avril|mai|juin|juillet|août|septembre|octobre|novembre|décembre|"
+    r"januar|februar|märz|juni|juli|oktober|dezember|enero|febrero|marzo|abril|mayo|junio|julio|agosto|"
+    r"septiembre|octubre|noviembre|diciembre|gennaio|febbraio|aprile|maggio|giugno|luglio|settembre|"
+    r"ottobre|dicembre|lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche|montag|dienstag|mittwoch|"
+    r"donnerstag|freitag|samstag|sonntag|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b|"
+    r"\b(datum|plane|axis|origin|sketch|default|standard|metric|inch)\b",
+    re.I,
+)
+
+
 def is_placeholder(v: str) -> bool:
     lo = v.lower().strip()
-    if VENDORS.search(lo):
+    if VENDORS.search(lo) or DATE_LIKE.search(lo) or "unknown" in lo:
         return True
     if lo in PLACEHOLDER or len(re.sub(r"[^A-Za-z]", "", lo)) < 2:
         return True
