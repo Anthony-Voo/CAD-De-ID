@@ -150,6 +150,9 @@ def rw_field_value(v: str) -> str:
         trail = part[len(lead) + len(core):]
         if core and not is_placeholder(clean(core)) and any(c.isalpha() for c in core):
             core = pseudo_text("id", norm_key(core), core)
+        elif core.isdigit() and len(core) >= 4:
+            # numeric account ids in identity fields (e.g. "13436", "hyd\\98609")
+            core = pseudo_text("id", "num:" + core, core)
         out.append(lead + core + trail)
     return "".join(out)
 
