@@ -91,7 +91,7 @@ def person_values(v: str):
     """Split a field value into identity strings (handles 'DOM\\user (DOM)')."""
     v = clean(v)
     out = []
-    m = re.fullmatch(r"([A-Za-z0-9\-]+)\\([^ ()]+)(?:\s*\(.*\))?", v)
+    m = re.fullmatch(r"([A-Za-z0-9_\-]+)\\([^ ()\\]+)(?:\s*\(.*)?", v)
     if m:
         dom, user = m.groups()
         if not is_placeholder(user):

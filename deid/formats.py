@@ -150,6 +150,34 @@ def sw3d_streams(data: bytes):
 
 
 def deflate_exact(raw: bytes, target: int):
+    out = _deflate_exact_blocks(raw, target)
+    if out is not None:
+        return out
+    # search encoder parameters for an exact size, then fall back to a
+    # shorter complete stream padded with zeros after its final block
+    # (inflate stops at the final block and ignores trailing bytes)
+    best = None
+    budget = 400 if len(raw) < 1 << 16 else 30
+    tries = 0
+    for level in (9, 8, 7, 6, 5, 4, 3, 2, 1):
+        for strategy in (zlib.Z_DEFAULT_STRATEGY, zlib.Z_FILTERED):
+            for mem in (9, 8, 7, 6, 5, 4):
+                for wbits in (-15, -14, -13, -12, -11, -10, -9):
+                    tries += 1
+                    if tries > budget:
+                        break
+                    co = zlib.compressobj(level, zlib.DEFLATED, wbits, mem, strategy)
+                    c = co.compress(raw) + co.flush()
+                    if len(c) == target:
+                        return c
+                    if len(c) < target and (best is None or len(c) > len(best)):
+                        best = c
+    if best is not None:
+        return best + b"\x00" * (target - len(best))
+    return None
+
+
+def _deflate_exact_blocks(raw: bytes, target: int):
     """Raw-deflate `raw` into exactly `target` bytes (or None).
 
     Compress all but the last r bytes with a sync flush (non-final blocks),

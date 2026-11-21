@@ -31,10 +31,11 @@ def commonness(word: str) -> float:
 
 
 def is_common_single(v: str) -> bool:
-    toks = [t for t in re.split(r"[\s_\-.]+", v) if t]
-    if len(toks) != 1:
+    """Every token is an everyday word (single words and generic phrases)."""
+    toks = [t for t in re.split(r"[\s_\-.,&()]+", v) if t and not t.isdigit()]
+    if not toks or len(toks) > 4:
         return False
-    return commonness(toks[0]) >= COMMON
+    return all(commonness(t) >= COMMON for t in toks)
 
 
 def main():
@@ -79,6 +80,12 @@ def main():
             continue
         if k == "host":
             reg.add("host", v, ctx=("path", "text", "bin"))
+            continue
+        if "\\" in v and k in ("person", "account"):
+            from .harvest import person_values
+            for k2, v2 in person_values(v):
+                if len(norm_key(v2)) >= 3:
+                    reg.add(k2, v2, ctx=("path", "text", "bin") if len(v2) >= 5 else ("path", "text"))
             continue
         nk = norm_key(v)
         if len(nk) < 3:
