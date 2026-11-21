@@ -24,6 +24,24 @@ OUT = None
 PATHMAP = None
 
 
+def path_literals(pathmap):
+    """Renamed folder / file-name components -> their new form, for exact
+    replacement inside file contents (assembly and drawing references)."""
+    lit = {}
+    for o, n in pathmap.items():
+        oa, na = o.split("/"), n.split("/")
+        if len(oa) != len(na):
+            continue
+        for x, y in zip(oa, na):
+            if x != y and len(x) >= 6 and len(x) == len(y):
+                lit[x] = y
+                if "." in x and "." in y:
+                    xs, ys = x.rsplit(".", 1)[0], y.rsplit(".", 1)[0]
+                    if xs != ys and len(xs) >= 6:
+                        lit[xs] = ys
+    return lit
+
+
 def init(reg_path, out, local, pathmap, mem_gb=2.0):
     global REG, OUT, PATHMAP
     try:
@@ -33,6 +51,7 @@ def init(reg_path, out, local, pathmap, mem_gb=2.0):
     except Exception:
         pass
     REG = Registry.from_json(reg_path)
+    REG.set_literals(path_literals(pathmap))
     OUT = out
     PATHMAP = pathmap
     dinit(local)

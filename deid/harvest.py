@@ -26,6 +26,7 @@ PLACEHOLDER = {
     "freecad", "catia", "inventor", "solid edge", "onshape", "microsoft", "adobe", "pc", "home", "office",
     "cad", "draft", "drafter", "teacher", "lab", "machine", "computer", "windows user", "windows", "standard",
     "sdl", "gens", "mcad", "kicad", "inkscape", "user1", "user01", "usuario1", "default user",
+    "微软用户", "微軟使用者", "用户", "使用者", "管理员", "ユーザー", "사용자",
 }
 
 SOFTWARE_RE = re.compile(
@@ -130,7 +131,7 @@ def is_placeholder(v: str) -> bool:
     lo = v.lower().strip()
     if VENDORS.search(lo) or DATE_LIKE.search(lo) or "unknown" in lo:
         return True
-    if lo in PLACEHOLDER or len(re.sub(r"[^A-Za-z]", "", lo)) < 2:
+    if lo in PLACEHOLDER or sum(1 for c in lo if c.isalpha()) < 2:
         return True
     if re.fullmatch(r"[\d\W_]+", lo):
         return True

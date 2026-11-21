@@ -33,6 +33,7 @@ class Identity:
     ctx: set = field(default_factory=lambda: {"path", "text", "bin"})
     substr: bool = False  # may match inside a larger word
     sources: int = 0
+    u16short: bool = False  # short value allowed in binary data, UTF-16 only
 
 
 def _cls(b: int) -> str:
@@ -60,6 +61,31 @@ class Registry:
     def __init__(self):
         self.ids: dict[tuple, Identity] = {}
         self._auto: dict = {}
+        self.literals: dict = {}  # exact original string -> exact replacement (renamed path parts)
+        self._lit = None
+
+    def set_literals(self, pairs: dict):
+        self.literals = {k: v for k, v in pairs.items() if k != v and len(k) >= 6}
+        self._lit = None
+
+    def _literal_auto(self):
+        if self._lit is None:
+            A = ahocorasick.Automaton()
+            n = 0
+            for o, t in self.literals.items():
+                for enc in ("utf-8", "utf-16-le"):
+                    try:
+                        ob, tb = o.encode(enc), t.encode(enc)
+                    except UnicodeEncodeError:
+                        continue
+                    if len(ob) != len(tb):
+                        continue
+                    A.add_word(ob.decode("latin-1"), ("literal", tb, enc, False, len(ob)))
+                    n += 1
+            if n:
+                A.make_automaton()
+            self._lit = A if n else False
+        return self._lit
 
     # ---------------------------------------------------------------- build
     def add(self, kind, text, ctx=None, substr=False, variants=None, key=None):
@@ -119,9 +145,12 @@ class Registry:
                 nk = norm_key(v)
                 if len(nk) < 3:
                     continue
+                encs = ("utf-8", "utf-16-le")
                 if ctx == "bin":
                     if len(v) < 5:
-                        continue
+                        if not ident.u16short:
+                            continue
+                        encs = ("utf-16-le",)
                     ci = len(v) >= 8
                     forms = {v} if ci else {v, v.lower(), v.upper(), v.title()}
                 elif ctx == "text":
@@ -131,7 +160,7 @@ class Registry:
                 else:
                     forms, ci = {v}, True
                 for f in forms:
-                    for enc in ("utf-8", "utf-16-le"):
+                    for enc in (encs if ctx == "bin" else ("utf-8", "utf-16-le")):
                         try:
                             b = f.encode(enc)
                         except UnicodeEncodeError:
@@ -174,6 +203,13 @@ class Registry:
             return []
         autos = self.automaton(ctx)
         cands = []
+        if self.literals:
+            L = self._literal_auto()
+            if L:
+                for end, val in L.iter(data.decode("latin-1")):
+                    s, e = end - val[4] + 1, end + 1
+                    if self._bounded(data, s, e, val[2], False):
+                        cands.append((s, e, val))
         for ci, A in autos.items():
             if A is None:
                 continue
@@ -199,6 +235,9 @@ class Registry:
             return data, 0
         buf = bytearray(data)
         for s, e, (kind, key, enc, substr, ln) in ms:
+            if kind == "literal":
+                buf[s:e] = key  # exact replacement bytes
+                continue
             buf[s:e] = pseudo_bytes(kind, key, bytes(data[s:e]), enc)
             if hits is not None:
                 hits.append((kind, key, bytes(data[s:e])))

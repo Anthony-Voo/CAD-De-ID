@@ -119,10 +119,51 @@ def local_registry(reg: Registry, where: str, data: bytes):
         nk = norm_key(v)
         if len(nk) < 2:
             continue
-        ctx = ("path", "text", "bin") if len(v) >= 5 else ("path", "text")
-        if (k, nk) not in reg.ids or not reg.ids[(k, nk)].ctx:
-            loc.add(k, v, ctx=ctx)
+        # values from this file's own identity fields: replaced everywhere in
+        # the file; short ones (3-4 chars) in binary data only as UTF-16 text
+        # (OLE / SolidWorks save history), where random bytes practically never match
+        if (k, nk) not in reg.ids or not reg.ids[(k, nk)].ctx or len(v) < 5:
+            ident = loc.add(k, v, ctx=("path", "text", "bin"))
+            if ident is not None and len(v) < 5:
+                ident.u16short = True
     return loc, found
+
+
+_FIELD_SPLIT = re.compile(r"(\s*[\\();,/&|]\s*|\s+and\s+|\s+-\s+)")
+
+
+def rw_field_value(v: str) -> str:
+    """Pseudonymize an identity field component by component, so that
+    'WAVELENGTH\\sbarnum (WAVELENGTH)', 'sbarnum' and 'SBARNUM' all use the
+    pseudonym of the same identity keys (same length, case pattern kept)."""
+    parts = _FIELD_SPLIT.split(v)
+    out = []
+    for i, part in enumerate(parts):
+        if i % 2 == 1 or not part.strip():
+            out.append(part)
+            continue
+        lead = part[: len(part) - len(part.lstrip())]
+        core = part.strip()
+        if core.lower().startswith("and "):
+            lead += core[:4]
+            core = core[4:]
+        trail = part[len(lead) + len(core):]
+        if core and not is_placeholder(clean(core)) and any(c.isalpha() for c in core):
+            core = pseudo_text("id", norm_key(core), core)
+        out.append(lead + core + trail)
+    return "".join(out)
+
+
+def rw_field_bytes(span: bytes, enc: str) -> bytes:
+    try:
+        v = span.decode(enc)
+    except UnicodeDecodeError:
+        return span
+    nv = rw_field_value(v)
+    nb = nv.encode(enc, "replace")
+    if len(nb) != len(span):
+        return pseudo_bytes("id", norm_key(v), span, enc)
+    return nb
 
 
 # =================================================================== text
@@ -161,7 +202,7 @@ def rw_ole(data: bytes, reg: Registry, where: str, notes: list):
                 kind = formats.ole_field_kind(d)
                 span = raw[d["start"]:d["end"]]
                 if kind and d["value"].strip() and not is_placeholder(clean(d["value"])):
-                    nb[d["start"]:d["end"]] = pseudo_bytes("id", norm_key(d["value"]), span, d["enc"])
+                    nb[d["start"]:d["end"]] = rw_field_bytes(span, d["enc"])
                 else:
                     nb[d["start"]:d["end"]] = reg.replace(span, "text")[0]
             new = bytes(nb)
@@ -241,7 +282,7 @@ def rw_pdf(data: bytes, reg: Registry, where: str, notes: list):
             except Exception:
                 continue
             if key in ("/Author", "/Company", "/Manager", "/LastModifiedBy") and v.strip() and not is_placeholder(clean(v)):
-                di[key] = pikepdf.String(pseudo_text("id", norm_key(v), v))
+                di[key] = pikepdf.String(rw_field_value(v))
             elif key not in ("/CreationDate", "/ModDate", "/Trapped"):
                 nv = reg.replace(v.encode("utf-8"), "text")[0].decode("utf-8", "replace")
                 if nv != v:
@@ -295,7 +336,7 @@ def rw_xmp(raw: bytes, reg: Registry) -> bytes:
         except UnicodeDecodeError:
             return m.group(0)
         if s.strip() and not is_placeholder(clean(s)):
-            return m.group(1) + pseudo_bytes("id", norm_key(s), v, "utf-8") + m.group(3)
+            return m.group(1) + rw_field_bytes(v, "utf-8") + m.group(3)
         return m.group(0)
     rx = re.compile(rb"(<(?:dc:creator|pdf:Author|xmp:Author|photoshop:AuthorsPosition|xmpRights:Owner)[^>]*>\s*(?:<rdf:(?:Seq|Bag|Alt)>\s*<rdf:li[^>]*>)?)([^<]{1,200})(<)")
     raw = rx.sub(fld, raw)
@@ -731,5 +772,5 @@ def rw_step_fields(data: bytes, reg: Registry) -> bytes:
             txt = v.decode("latin-1")
             if txt.strip() and not is_placeholder(clean(txt)) and not re.search(r"open cascade|spatial", txt, re.I):
                 a = base + g.start(1) + s.start(1)
-                buf[a:a + len(v)] = pseudo_bytes("id", norm_key(txt), v, "latin-1")
+                buf[a:a + len(v)] = rw_field_bytes(v, "latin-1")
     return bytes(buf)
