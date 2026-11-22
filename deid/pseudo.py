@@ -75,6 +75,7 @@ def pseudo_text(kind: str, key: str, original: str) -> str:
     The kind is ignored on purpose: one key (e.g. "bcn3d") must get one
     pseudonym whether it was seen as an account, an org or a project."""
     kind = "id"
+    key = TEXT_SALT.get(key, key)
     na = sum(1 for c in original if c.isalpha())
     nd = sum(1 for c in original if c.isdigit())
     L = letters(kind, key, na + 2)
@@ -354,7 +355,12 @@ def pseudo_domain(original: str) -> str:
         if not lab or lab.lower() in DOMAIN_KEEP or lab.isdigit():
             out.append(lab)
         else:
-            out.append(pseudo_text("id", norm_key(lab), lab))
+            kl = KIND_OF.get(norm_key(lab))
+            if kl in ("person", "org", "account") and lab.isalnum():
+                v = pseudo_entity(kl, norm_key(lab), lab)
+                out.append(v if len(v) == len(lab) else pseudo_text("id", norm_key(lab), lab))
+            else:
+                out.append(pseudo_text("id", norm_key(lab), lab))
     return ".".join(out)
 
 
@@ -366,6 +372,8 @@ def pseudo_email(original: str) -> str:
     return lp + "@" + pseudo_domain(dom)
 
 
+TEXT_SALT: dict = {}  # key -> salted key, set where the plain hash collides
+KIND_OF: dict = {}  # normalized key -> the one kind its pseudonym is built with
 JOINED: dict = {}   # "4dsystems" -> ("org", "4D Systems"): joined forms of multi-word names
 
 
@@ -377,7 +385,7 @@ def _joined(original: str):
     if not hit:
         return None
     k2, disp = hit
-    full = pseudo_org(disp) if k2 == "org" else pseudo_person(disp)
+    full = pseudo_org(disp) if k2 == "org" else (pseudo_person(disp) if k2 == "person" else pseudo_text("id", norm_key(disp), disp))
     chars = [c for c in full if c.isalnum()]
     if len(chars) != len(original):
         return None
@@ -388,12 +396,45 @@ def _joined(original: str):
     return "".join(chars)
 
 
+def _fold(s: str) -> str:
+    """'Průša' -> 'Prusa' (one output character per input character)."""
+    out = []
+    for c in s:
+        if c.isascii():
+            out.append(c)
+            continue
+        b = "".join(x for x in unicodedata.normalize("NFKD", c) if not unicodedata.combining(x))
+        out.append(b if len(b) == 1 and b.isascii() else ("x" if c.isalpha() else c))
+    return "".join(out)
+
+
 def pseudo_entity(kind: str, key: str, original: str) -> str:
     """Kind-aware, same-length pseudonym (see the notes above)."""
-    if original.isalnum() and kind in ("person", "org", "account", "project", "id"):
+    if not original.isascii():
+        f = _fold(original)
+        if len(f) == len(original) and f.isascii():
+            original = f
+    if kind in _NO_CANON:
+        return _pseudo_entity_kind(kind, key, original)
+    if original.isalnum():
         j = _joined(original)
         if j:
             return j
+    if True:
+        # one identity, one pseudonym: 'ASME' as an author field, as an
+        # organization and as the label of asme.org all use the same rule
+        k2 = KIND_OF.get(key)
+        if k2 == "domain" and "." not in original and " " not in original:
+            return pseudo_domain(original)
+        if k2 in ("person", "org", "account"):
+            kind = k2
+    return _pseudo_entity_kind(kind, key, original)
+
+
+_NO_CANON = {"domain", "email", "phone", "num", "literal"}
+
+
+def _pseudo_entity_kind(kind: str, key: str, original: str) -> str:
     if kind == "person":
         if original.isalpha():
             joined = pseudo_login(original)      # "PaulOrkwis" -> pieces of "Paul Orkwis"
@@ -416,7 +457,7 @@ def pseudo_entity(kind: str, key: str, original: str) -> str:
 
 
 def pseudo_entity_bytes(kind: str, key: str, original: bytes, encoding: str) -> bytes:
-    if kind not in ("person", "org", "domain", "email", "account"):
+    if kind not in ("person", "org", "domain", "email", "account") and key not in KIND_OF and key not in JOINED:
         return pseudo_bytes(kind, key, original, encoding)
     try:
         txt = original.decode(encoding)
@@ -424,6 +465,27 @@ def pseudo_entity_bytes(kind: str, key: str, original: bytes, encoding: str) -> 
         return pseudo_bytes(kind, key, original, encoding)
     new = pseudo_entity(kind, key, txt)
     out = new.encode(encoding, "replace")
+    if len(out) != len(original) and len(new) == len(txt):
+        # keep accented letters where the original has them ('Jesús' ->
+        # 'Seoñu'), so the byte length matches without padding and the
+        # accent-folded pseudonym is the same as in UTF-16/ASCII contexts
+        acc = {c: a for c, a in zip("aeiounc", "áéíóúñç")}
+        acc.update({c.upper(): a.upper() for c, a in acc.items()})
+        chars = list(new)
+        used = set()
+        for i, (oc, nc) in enumerate(zip(txt, new)):
+            ob = len(oc.encode(encoding, "replace"))
+            if ob == len(nc.encode(encoding, "replace")) or ob != 2:
+                continue
+            # this position, else the nearest accentable letter
+            for j in sorted(range(len(chars)), key=lambda j: abs(j - i)):
+                if j not in used and chars[j] in acc and txt[j].isascii() or j == i and chars[j] in acc:
+                    chars[j] = acc[chars[j]]
+                    used.add(j)
+                    break
+        out2 = "".join(chars).encode(encoding, "replace")
+        if len(out2) == len(original):
+            out = out2
     if len(out) != len(original):
         # non-ASCII letters (2 bytes in UTF-8) -> keep the canonical
         # pseudonym and pad it to the original byte length

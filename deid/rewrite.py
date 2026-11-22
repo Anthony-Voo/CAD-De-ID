@@ -30,14 +30,18 @@ MAX_INMEM = 1_500_000_000
 
 
 # =================================================================== paths
+def canon(x: str) -> str:
+    """The one pseudonym of an identity string, whatever context it is in
+    (folder name, field, text): kind and joined-form rules from the registry."""
+    from .pseudo import pseudo_entity
+    v = pseudo_entity("id", norm_key(x), x)
+    return v if len(v) == len(x) else pseudo_text("id", norm_key(x), x)
+
+
 def map_domain(dom: str) -> str:
-    out = []
-    for lab in dom.split("."):
-        if not lab or lab.lower() in DOMAIN_KEEP or lab.isdigit():
-            out.append(lab)
-        else:
-            out.append(pseudo_text("id", norm_key(lab), lab))
-    return ".".join(out)
+    from .pseudo import pseudo_domain
+    v = pseudo_domain(dom)
+    return v if len(v) == len(dom) else dom
 
 
 def _map_component(comp: str, reg: Registry, is_file: bool) -> str:
@@ -57,7 +61,7 @@ def map_owner_repo(seg: str) -> str:
         if i >= 2 and re.fullmatch(r"[0-9a-f]{6,40}", p):
             out.append(p)
         elif p:
-            out.append(pseudo_text("id", norm_key(p), p) if len(norm_key(p)) >= 2 else p)
+            out.append(canon(p) if len(norm_key(p)) >= 2 else p)
         else:
             out.append(p)
     return "__".join(out)
@@ -78,7 +82,7 @@ def map_path(path: str, reg: Registry) -> str:
             out[2] = map_owner_repo(seg)
         elif kind == "gitlab":
             host, *rest = seg.split("__")
-            out[2] = "__".join([host] + [pseudo_text("id", norm_key(x), x) if x and x != "project" else x for x in rest])
+            out[2] = "__".join([host] + [canon(x) if x and x != "project" else x for x in rest])
         elif kind == "web" or (kind == "catalog" and re.fullmatch(r"[a-z0-9.\-]+\.[a-z]{2,}", seg)):
             out[2] = map_domain(seg)
         else:
@@ -198,7 +202,7 @@ def _rw_field_value_old(v: str) -> str:
             core = core[4:]
         trail = part[len(lead) + len(core):]
         if core and not is_placeholder(clean(core)) and any(c.isalpha() for c in core):
-            core = pseudo_text("id", norm_key(core), core)
+            core = canon(core)
         elif core.isdigit() and len(core) >= 4:
             # numeric account ids in identity fields (e.g. "13436", "hyd\\98609")
             core = pseudo_text("id", "num:" + core, core)
@@ -214,7 +218,8 @@ def rw_field_bytes(span: bytes, enc: str, kind: str = "person") -> bytes:
     nv = rw_field_value(v, kind)
     nb = nv.encode(enc, "replace")
     if len(nb) != len(span):
-        return pseudo_bytes("id", norm_key(v), span, enc)
+        from .pseudo import pseudo_entity_bytes
+        return pseudo_entity_bytes("id", norm_key(v), span, enc)
     return nb
 
 

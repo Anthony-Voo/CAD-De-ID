@@ -217,18 +217,68 @@ class Registry:
                 orgs.append(disp)
         pseudo.PERSON_INDEX.clear()
         pseudo.PERSON_INDEX.update(idx)
+        pseudo.KIND_OF.clear()
+        rank = {}
+        for (kind, key), ident in self.ids.items():
+            if kind not in ("person", "org", "account", "domain"):
+                continue
+            if kind == "person":
+                disp = max(ident.variants, key=lambda v: (v.count(" "), len(v))) if ident.variants else key
+                real = len(re.findall(r"[A-Za-z]+", disp)) >= 2 and bool(ident.ctx)
+                r_ = 4 if (real or key in idx) else 0
+            else:
+                r_ = {"org": 3, "account": 2, "domain": 1}[kind]
+            if r_ > rank.get(key, (-1, ""))[0]:
+                rank[key] = (r_, kind)
+        for key, (r_, kind) in rank.items():
+            if key in idx:
+                kind = "person"
+            pseudo.KIND_OF[key] = kind
         pseudo.JOINED.clear()
         for (kind, key), ident in self.ids.items():
-            if kind not in ("org", "person") or not ident.ctx or not ident.variants:
+            if kind in ("domain", "email", "phone") or not ident.ctx or not ident.variants:
                 continue
             disp = max(ident.variants, key=lambda v: (v.count(" "), len(v)))
             words = re.findall(r"[A-Za-z0-9]+", disp)
-            if len(words) >= 2 and " " in disp:
+            if len(words) >= 2 and " " in disp and disp.isascii():
                 j = "".join(words).lower()
                 if len(j) >= 6 and j not in idx:
-                    pseudo.JOINED.setdefault(j, (kind, disp))
+                    k2 = pseudo.KIND_OF.get(j, kind)
+                    if k2 not in ("person", "org"):
+                        k2 = "text"
+                    pseudo.JOINED.setdefault(j, (k2, disp))
         pseudo.build_token_table(persons, orgs)
+        self._resolve_text_collisions()
         self._add_person_forms(idx)
+
+    def _resolve_text_collisions(self):
+        """No two identities share a pseudonym, and no pseudonym is itself a
+        known original: walk all keys in a fixed order and re-salt the hash of
+        any key whose (separator/case-folded) pseudonym is already taken."""
+        from . import pseudo
+        from .pseudo import norm_key, pseudo_entity
+        pseudo.TEXT_SALT.clear()
+        disp = {}
+        for (kind, key), ident in self.ids.items():
+            if kind in ("email", "phone") or not ident.variants:
+                continue
+            if key not in disp:
+                disp[key] = (kind, max(ident.variants, key=lambda v: (v.count(" "), len(v))))
+        originals = set(disp)
+        used = {}
+        for key in sorted(disp):
+            kind, d = disp[key]
+            for i in range(9):
+                try:
+                    o = norm_key(pseudo_entity(kind, key, d))
+                except Exception:
+                    break
+                if len(o) < 2 or (used.get(o, key) == key and (o not in originals or o == key)):
+                    used[o] = key
+                    break
+                pseudo.TEXT_SALT[key] = f"{key}#{i + 1}"
+            else:
+                used[o] = key
 
     def _demote_junk_persons(self):
         """Person 'names' that are prose ('From Fig.', 'The Author', 'Holder.
