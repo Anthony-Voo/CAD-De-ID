@@ -20,16 +20,19 @@ HOW TO RUN (reproduces this corpus exactly)
   python3 -m pip install -r code/requirements.lock        # exact versions used
   bash code/pipeline.sh ./work                            # -> ./work/cleaned-corpus
 
-  Deterministic: pipeline.sh reuses code/data/identities.json, the exact list
-  of identities found for this submission (identifier-matching data only, no
-  original-to-pseudonym table), and pseudonyms are an HMAC of each identity
+  Deterministic: pipeline.sh runs the discovery pass (discover.py) and
+  build_registry.py to rebuild the identity list from the input, then
+  rewrites every file.  Pseudonyms are an HMAC of each normalized identity
   under DEID_SECRET (this submission used the default key in
-  code/deid/pseudo.py).  Same input + same list + same key = the same files.
-  REDISCOVER=1 rebuilds the list from the input with the discovery pass.
+  code/deid/pseudo.py), so the same input and key give the same files.  No
+  list of original identities and no original-to-pseudonym table is
+  shipped in this submission (they would themselves be identifying).
   pipeline.sh downloads the input from the Builders mirror; on a machine with
-  less than ~150 GB free use code/tools/drive3.sh, which processes, uploads
-  and deletes ~25 GB chunks.  Run logs and path maps stay in the work
-  directory and are not part of this submission.
+  less than ~150 GB free use code/tools/drive4.sh, which processes, uploads
+  and deletes ~20 GB chunks.  Run logs, the identity list and path maps stay
+  in the private work directory.
+  Requirements: Linux, Python 3.13, poppler-utils (pdftotext), curl;
+  about 4 CPU cores and 16 GB RAM, ~10 h for the full corpus.
 
 Steps (all in code/deid/):
   1. discover.py       streams every input file and harvests identity values:

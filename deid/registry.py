@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 
 import ahocorasick
 
-from .pseudo import norm_key, pseudo_bytes
+from .pseudo import norm_key, pseudo_bytes, pseudo_entity_bytes
 
 SEPS = [" ", "_", "-", ".", ""]
 
@@ -55,6 +55,66 @@ def _joins(a: str, b: str) -> bool:
     if a in "UL" and b in "UL":
         return not (a == "L" and b == "U")  # camelCase boundary
     return False  # letter/digit transitions count as boundaries
+
+
+def add_person_forms(ident, common=None, index=None):
+    """Surface forms of one person identity (see Registry._add_person_forms)."""
+    from .pii_detect import GIVEN
+    from . import pseudo
+    if common is None:
+        try:
+            from wordfreq import zipf_frequency
+
+            def common(w):
+                return max(zipf_frequency(w.lower(), l) for l in ("en", "fr", "de", "es", "it")) >= 3.0
+        except ImportError:
+            def common(w):
+                return False
+    disp = max(ident.variants, key=lambda v: (v.count(" "), len(v)))
+    toks = [t for t in re.findall(r"[A-Za-z]+", disp) if len(t) > 1]
+    single = re.fullmatch(r"([A-Z])\.?\s?([A-Za-z][A-Za-z'\-]+)", disp.strip())
+    if len(toks) >= 2:
+        g_, s_ = toks[0], toks[-1]
+        ini = g_[0].upper()
+    elif single:
+        g_, s_ = None, single.group(2)
+        ini = single.group(1).upper()
+    else:
+        return
+    # only real-looking names get derived forms: junk "persons" such as
+    # "ASME Downloaded From" or "Schaffner Group The" would otherwise yield
+    # "From A" / "The S" and rewrite ordinary prose everywhere
+    try:
+        from wordfreq import zipf_frequency
+
+        def very_common(w):
+            return zipf_frequency(w.lower(), "en") >= 4.6
+    except ImportError:
+        def very_common(w):
+            return w.lower() in {"the", "from", "this", "that", "with", "and", "for", "group", "inc", "of"}
+    if len(toks) > 4 or any(very_common(t) and t.lower() not in GIVEN for t in toks):
+        return
+    if not re.fullmatch(r"[A-Za-z][A-Za-z'\-]+", s_) or len(s_) < 3:
+        return
+    gknown = bool(g_) and g_.lower() in GIVEN
+    s_common = common(s_)
+    if s_common and not gknown:
+        return
+    if g_ and not gknown and common(g_):
+        return
+    forms = {f"{ini}. {s_}", f"{ini}.{s_}", f"{ini}. {s_.upper()}", f"{ini}.{s_.upper()}"}
+    if not s_common:
+        forms |= {f"{ini} {s_}", f"{s_} {ini}", f"{s_}, {ini}."}
+    if g_:
+        forms.add(f"{s_}, {g_}")
+    if len(s_) >= 5 and not common(s_) and s_.lower() not in GIVEN and (gknown or not g_):
+        forms.add(s_)
+    ident.variants |= forms
+    if g_:
+        gl, sl = g_.lower(), s_.lower()
+        for form, login in (("is", gl[0] + sl), ("si", sl + gl[0]), ("gs", gl + sl), ("gi", gl + sl[0])):
+            if len(login) >= 4:
+                pseudo.PERSON_INDEX.setdefault(login, (gl, sl, form))
 
 
 class Registry:
@@ -126,7 +186,107 @@ class Registry:
             r.ids[(i.kind, i.key)] = i
         from . import pseudo
         pseudo.FORBIDDEN.update(k for (_, k) in r.ids)
+        r.build_entity_tables()
         return r
+
+    def build_entity_tables(self):
+        """Person index (logins -> person) and the collision-free token table."""
+        from . import pseudo
+        self._demote_junk_persons()
+        persons, orgs = [], []
+        idx = {}
+        for (kind, key), ident in self.ids.items():
+            if not ident.ctx:
+                continue
+            disp = max(ident.variants, key=lambda v: (v.count(" "), len(v))) if ident.variants else key
+            if kind == "person":
+                persons.append(disp)
+                toks = [t for t in re.findall(r"[A-Za-z]+", disp) if len(t) > 1]
+                if len(toks) >= 2:
+                    g_, s_ = toks[0].lower(), toks[-1].lower()
+                    for form, login in (("is", g_[0] + s_), ("si", s_ + g_[0]), ("gs", g_ + s_), ("gi", g_ + s_[0])):
+                        if len(login) >= 4:
+                            idx.setdefault(login, (g_, s_, form))
+                else:
+                    m1 = re.fullmatch(r"([A-Za-z])\.?\s?([A-Za-z]{4,})", disp.strip())
+                    if m1:  # 'D. Bridges' -> login 'dbridges' / 'bridgesd'
+                        g_, s_ = m1.group(1).lower(), m1.group(2).lower()
+                        idx.setdefault(g_ + s_, (g_, s_, "is"))
+                        idx.setdefault(s_ + g_, (g_, s_, "si"))
+            elif kind == "org":
+                orgs.append(disp)
+        pseudo.PERSON_INDEX.clear()
+        pseudo.PERSON_INDEX.update(idx)
+        pseudo.JOINED.clear()
+        for (kind, key), ident in self.ids.items():
+            if kind not in ("org", "person") or not ident.ctx or not ident.variants:
+                continue
+            disp = max(ident.variants, key=lambda v: (v.count(" "), len(v)))
+            words = re.findall(r"[A-Za-z0-9]+", disp)
+            if len(words) >= 2 and " " in disp:
+                j = "".join(words).lower()
+                if len(j) >= 6 and j not in idx:
+                    pseudo.JOINED.setdefault(j, (kind, disp))
+        pseudo.build_token_table(persons, orgs)
+        self._add_person_forms(idx)
+
+    def _demote_junk_persons(self):
+        """Person 'names' that are prose ('From Fig.', 'The Author', 'Holder.
+        This', 'Someone else') stay field-only: they are still pseudonymized
+        inside the author field they came from, never replaced as free text."""
+        try:
+            from wordfreq import zipf_frequency
+        except ImportError:
+            return
+        from .pii_detect import GIVEN
+        FUNC = {"the", "from", "this", "that", "of", "by", "and", "an", "as", "no", "not", "for",
+                "only", "to", "in", "on", "at", "with", "is", "are", "be", "or"}
+        for (kind, key), ident in self.ids.items():
+            if kind != "person" or not ident.ctx or not ident.variants:
+                continue
+            disp = max(ident.variants, key=lambda v: (v.count(" "), len(v)))
+            if not re.fullmatch(r"[A-Za-z .\-_']+", disp):
+                continue
+            toks = [t.lower() for t in re.findall(r"[A-Za-z]+", disp)]
+            if len(toks) < 2 or any(len(t) == 1 for t in toks):
+                continue
+            ORGISH = {"inc", "corporation", "corp", "foundation", "university", "society", "companies", "company",
+                      "software", "limited", "ltd", "lab", "labs", "institute", "systems", "instruments", "group",
+                      "technology", "technologies", "llc", "gmbh", "authors", "consulting", "electronics", "semiconductor", "china"}
+            if toks[-1] in ORGISH or len(toks) > 3:
+                continue
+            lead = toks[0] in FUNC and toks[0] not in ("and", "by")
+            junk = lead or toks[-1] in FUNC
+            if not junk and not any(t in GIVEN for t in toks):
+                junk = all(zipf_frequency(t, "en") >= 4.3 for t in toks)
+            if junk:
+                ident.ctx = set() if isinstance(ident.ctx, set) else []
+
+    def _add_person_forms(self, idx):
+        """Every surface form of a known person is a variant of the same
+        identity: initials ('C. Hollick', 'C.Hollick', 'Hollick C',
+        'HOLLICK, C.'), the surname alone when distinctive, and the login
+        forms built from the name ('chollick', 'hollickc', 'callumh')."""
+        try:
+            from wordfreq import zipf_frequency
+        except ImportError:
+            zipf_frequency = None
+        from .pii_detect import GIVEN
+
+        def common(w):
+            if zipf_frequency is None:
+                return False
+            return max(zipf_frequency(w.lower(), l) for l in ("en", "fr", "de", "es", "it")) >= 3.0
+
+        for (kind, key), ident in list(self.ids.items()):
+            if kind != "person" or not ident.ctx:
+                continue
+            add_person_forms(ident, common)
+        for login, (g_, s_, form) in idx.items():
+            if len(login) >= 5 and not common(login) and ("account", login) not in self.ids:
+                a = Identity("account", login, {login}, {"path", "text", "bin"}, False, 1)
+                self.ids[("account", login)] = a
+        self._auto = {}
 
     def remove(self, kind, key):
         self.ids.pop((kind, key), None)
@@ -259,7 +419,7 @@ class Registry:
             if kind == "literal":
                 buf[s:e] = key  # exact replacement bytes
                 continue
-            buf[s:e] = pseudo_bytes(kind, key, bytes(data[s:e]), enc)
+            buf[s:e] = pseudo_entity_bytes(kind, key, bytes(data[s:e]), enc)
             if hits is not None:
                 hits.append((kind, key, bytes(data[s:e])))
         return bytes(buf), len(ms)

@@ -174,6 +174,11 @@ class FontCodec:
                 self.map, self.nbytes = _parse_cmap(tu.read_bytes())
             except Exception:
                 self.map = {}
+            if not self.two:
+                # simple fonts always use 1-byte codes, whatever codespace
+                # the ToUnicode CMap declares (<0000> <FFFF> is common)
+                self.nbytes = 1
+                self.map = {c: u for c, u in self.map.items() if c < 256}
         if not self.map:
             if self.two:
                 self.map = _cid_font_map(font)
@@ -280,47 +285,59 @@ def rewrite_page_text(pdf, page_obj, reg: Registry, depth=0) -> int:
         nonlocal changed
         if not segs:
             return
-        # join operators with a space (natural word boundary), except
-        # glyph-by-glyph output and the pieces of one kerned TJ array
-        parts, starts = [], []
-        pos = 0
-        prev = None
-        for (oi, ai, codec, codes, t) in segs:
-            if prev is not None:
-                same_tj = prev[0] == oi
-                single = len(prev[4].strip()) <= 1 and len(t.strip()) <= 1
-                pt, nt0 = prev[4], t
-                both_alnum = bool(pt) and bool(nt0) and pt[-1].isalnum() and nt0[0].isalnum()
-                if not same_tj and not single and both_alnum:
-                    parts.append(" ")
-                    pos += 1
-            starts.append(pos)
-            parts.append(t)
-            pos += len(t)
-            prev = (oi, ai, codec, codes, t)
-        text = "".join(parts)
-        if not text.strip():
-            return
+        segs = [list(sg) for sg in segs]
         # glyph-by-glyph pages carry no space characters: word boundaries are
         # unknown, so distinctive identities (6+ chars) may match inside runs
         singles = sum(1 for sg in segs if len(sg[4].strip()) <= 1)
-        nt = _replace_text(text, reg, loose=singles > 0.6 * len(segs))
-        if nt == text:
-            return
-        for k, (oi, ai, codec, codes, t) in enumerate(segs):
-            seg_new = nt[starts[k]:starts[k] + len(t)]
-            if seg_new == t:
+        loose = singles > 0.6 * len(segs)
+        touched = set()
+        # pass 1: operators joined as drawn, no inserted spaces ("Okapu"+"u",
+        # "U"+"."+" Okapuu"); pass 2: a space between two operators where
+        # letters/digits meet (words drawn one per operator)
+        for spaced in (False, True):
+            parts, starts = [], []
+            pos = 0
+            prev = None
+            for sg in segs:
+                oi, t = sg[0], sg[4]
+                if spaced and prev is not None:
+                    same_tj = prev[0] == oi
+                    single = len(prev[4].strip()) <= 1 and len(t.strip()) <= 1
+                    pt = prev[4]
+                    both_alnum = bool(pt) and bool(t) and pt[-1].isalnum() and t[0].isalnum()
+                    if not same_tj and not single and both_alnum:
+                        parts.append(" ")
+                        pos += 1
+                starts.append(pos)
+                parts.append(t)
+                pos += len(t)
+                prev = sg
+            text = "".join(parts)
+            if not text.strip():
+                return
+            nt = _replace_text(text, reg, loose=loose)
+            if nt == text:
                 continue
-            nb = bytearray()
-            for oc, och, nch in zip(codes, t, seg_new):
-                code = oc if och == nch else codec.encode_char(nch)
-                if code is None:
-                    code = oc
-                nb += code.to_bytes(codec.nbytes, "big")
+            for k, sg in enumerate(segs):
+                oi, ai, codec, codes, t = sg
+                seg_new = nt[starts[k]:starts[k] + len(t)]
+                if seg_new == t:
+                    continue
+                ncodes = []
+                for oc, och, nch in zip(codes, t, seg_new):
+                    code = oc if och == nch else codec.encode_char(nch)
+                    ncodes.append(oc if code is None else code)
+                sg[3] = ncodes
+                sg[4] = "".join(nch if (oc != nc or och == nch) else och
+                                for oc, nc, och, nch in zip(codes, ncodes, t, seg_new))
+                touched.add(k)
+        for k in touched:
+            oi, ai, codec, codes, t = segs[k]
+            nb = b"".join(c.to_bytes(codec.nbytes, "big") for c in codes)
             if ai is None:
-                ops[oi][0][-1] = pikepdf.String(bytes(nb))
+                ops[oi][0][-1] = pikepdf.String(nb)
             else:
-                ops[oi][0][0][ai] = pikepdf.String(bytes(nb))
+                ops[oi][0][0][ai] = pikepdf.String(nb)
             changed += 1
 
     for oi, (operands, op) in enumerate(ops):

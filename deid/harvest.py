@@ -174,7 +174,7 @@ PHONE_RE = re.compile(
 
 
 ORG_SUFFIX_RE = re.compile(
-    rb"\b((?:[A-Z][A-Za-z0-9&'\-]+[ ]){0,4}[A-Z][A-Za-z0-9&'\-]+),? (Inc\.?|Incorporated|GmbH|mbH|Ltd\.?|Limited|LLC|"
+    rb"\b((?:(?:[A-Z][A-Za-z0-9&'\-]+|&|of|and)[ ]){0,5}[A-Z][A-Za-z0-9&'\-]+),? (Inc\.?|Incorporated|GmbH|mbH|Ltd\.?|Limited|LLC|"
     rb"Corp\.?|Corporation|Co\.,? ?Ltd\.?|AG|S\.A\.|S\.p\.A\.|SpA|S\.r\.l\.|Srl|B\.V\.|N\.V\.|Oy|A/S|"
     rb"Pty\.? Ltd\.?|PLC|KG|SAS|SARL)(?![A-Za-z])")
 INST_OF_RE = re.compile(
@@ -209,7 +209,9 @@ def harvest_orgs(data: bytes, where: str):
             while toks and toks[0].lower() in ("copyright", "by", "from", "of", "and", "the", "this", "our", "your",
                                                "a", "an", "all", "any", "each", "such", "other"):
                 toks = toks[1:]
-            if not toks or (len(toks) == 1 and _all_common(toks[0])):
+            while toks and toks[-1].lower() in ("of", "and", "&"):
+                toks = toks[:-1]
+            if not toks or (len(toks) == 1 and _all_common(toks[0]) and not re.search(r"[a-z]-?[A-Z]", toks[0])):
                 continue
             name = " ".join(toks)
             v = name + m.group(0).decode("utf-8", "replace")[len(m.group(1).decode("utf-8", "replace")):]
@@ -258,7 +260,11 @@ def harvest_text(data: bytes, where: str):
         local, dom = e.split("@", 1)
         if not (dom == dom.lower() or dom.split(".")[-1] == dom.split(".")[-1].upper() == dom.split(".")[-1] and dom[0].isalpha() and len(dom.split(".")[-2]) >= 3):
             continue
-        if len(local) < 2 or re.fullmatch(r"[A-Za-z0-9]{1,6}", local) and not re.fullmatch(r"[a-z]+|[A-Z][a-z]+", local):
+        if len(local) < 2:
+            continue
+        # short random-looking local parts only count with an all-lower-case domain
+        if re.fullmatch(r"[A-Za-z0-9]{1,6}", local) and not re.fullmatch(r"[a-z]+|[A-Z][a-z]+|[A-Z][a-z]+[A-Z]", local) \
+                and dom != dom.lower():
             continue
         if re.search(r"\.(png|jpg|gif|svg|tlb|dll)$", e, re.I) or NS_DOMAINS.search(dom):
             continue
@@ -403,7 +409,17 @@ def harvest_title_block(text: str, where):
     return out
 
 
-def pdf_page_text(data: bytes, maxpages=6) -> str:
+def pdf_page_text(data: bytes, maxpages=400) -> str:
+    """Text of the whole document (pdftotext, as text extractors see it);
+    pypdfium2 as a fallback."""
+    try:
+        import subprocess
+        r = subprocess.run(["pdftotext", "-q", "-l", str(maxpages), "-", "-"], input=data,
+                           capture_output=True, timeout=120)
+        if r.stdout:
+            return r.stdout.decode("utf-8", "replace")
+    except Exception:
+        pass
     try:
         import pypdfium2 as pdfium
         doc = pdfium.PdfDocument(data)
@@ -424,6 +440,10 @@ def harvest_pdf(data: bytes, where):
         if txt:
             out += harvest_title_block(txt.replace("\r", "\n"), where)
             out += harvest_orgs(txt.encode("utf-8", "replace"), where)
+            from .pii_detect import candidates
+            for k, v in candidates(txt):
+                if k == "person" and not is_placeholder(v):
+                    out.append(("person", v.strip(), where))
             out += harvest_text(txt.encode("utf-8", "replace"), where)
     except Exception:
         pass

@@ -164,3 +164,272 @@ def pseudo_bytes(kind: str, key: str, original: bytes, encoding: str) -> bytes:
     while len(out) < len(original):
         out += extra[(len(out) // unit) % 64].encode(encoding)
     return out[: len(original)]
+
+
+# ===================================================== entity-level pseudonyms
+# Person names are pseudonymized token by token so every surface form of the
+# same person agrees: a surname always maps to the same word, a given name's
+# pseudonym always starts with PERM[its initial], and an initial maps to
+# PERM[initial].  "Callum Hollick", "C. Hollick", "C.Hollick", "HOLLICK, C."
+# and "hollick" therefore all use the same pseudonym pieces.  Organizations
+# are pseudonymized word by word with legal suffixes kept, so "X Corporation",
+# "X Corp." and "X Inc." share the base pseudonym.
+
+_ALPHA = "abcdefghijklmnopqrstuvwxyz"
+_PERM = None
+
+ORG_SUFFIXES = {"inc", "incorporated", "llc", "ltd", "limited", "corp", "corporation", "co", "company", "gmbh",
+                "mbh", "ag", "kg", "sa", "spa", "srl", "bv", "nv", "oy", "ab", "plc", "sas", "sarl", "pty",
+                "kk", "the", "of", "and", "&", "de", "di", "für", "und", "et"}
+
+
+def _perm():
+    global _PERM
+    if _PERM is None:
+        letters = list(_ALPHA)
+        raw = _stream("perm", "initials", 64, b"P")
+        # Fisher-Yates with the keyed stream; must not map a letter to itself
+        for i in range(len(letters) - 1, 0, -1):
+            j = raw[i] % (i + 1)
+            letters[i], letters[j] = letters[j], letters[i]
+        for i in range(26):
+            if letters[i] == _ALPHA[i]:
+                k = (i + 1) % 26
+                letters[i], letters[k] = letters[k], letters[i]
+        _PERM = dict(zip(_ALPHA, letters))
+    return _PERM
+
+
+def _case_like(word_src: str, word_new: str) -> str:
+    # canonical capitalization: first letter upper, rest lower
+    return word_new[:1].upper() + word_new[1:].lower()
+
+
+TOKEN_TABLE: dict = {}      # (namespace, key) -> pseudonym, filled by the registry (collision-free)
+_TOKEN_USED: dict = {}      # pseudonym (lower) -> (namespace, key)
+
+
+def _raw_token_pseudo(namespace: str, k: str, n: int, first_letter, salt: int) -> str:
+    L = letters("id", namespace + ":" + k + ("" if not salt else "#%d" % salt), n + 4)
+    s = "".join(L[i] for i in range(n))
+    if first_letter:
+        s = first_letter + s[1:]
+    return s
+
+
+def _token_pseudo(namespace: str, tok: str, first_letter: str | None = None) -> str:
+    """Pseudonym for one alphabetic token (same length).  first_letter, if
+    given, fixes the first character (used for given names).  Distinct
+    tokens never share a pseudonym and a pseudonym never spells a real
+    identity (rerolled deterministically)."""
+    k = norm_key(tok)
+    hit = TOKEN_TABLE.get((namespace, k, len(tok)))
+    if hit is not None:
+        return hit
+    for salt in range(12):
+        s = _raw_token_pseudo(namespace, k, len(tok), first_letter, salt)
+        sl = s.lower()
+        owner = _TOKEN_USED.get(sl)
+        if sl != k and (owner is None or owner == (namespace, k)) and (len(sl) < 3 or sl not in FORBIDDEN):
+            break
+    _TOKEN_USED.setdefault(s.lower(), (namespace, k))
+    TOKEN_TABLE[(namespace, k, len(tok))] = s
+    return s
+
+
+def build_token_table(person_names, org_names):
+    """Assign every name token of the registry its pseudonym in a fixed
+    (sorted) order, so the table - and the rerolls - are deterministic."""
+    TOKEN_TABLE.clear()
+    _TOKEN_USED.clear()
+    perm = _perm()
+    for name in sorted(set(person_names)):
+        toks = [t for t in _TOK_SPLIT.findall(name) if t.isalpha() and len(t) > 1]
+        for n, t in enumerate(toks):
+            if n == 0 and len(toks) >= 2:
+                _token_pseudo("given", t, perm.get(norm_key(t)[:1] or "x", "x"))
+            else:
+                _token_pseudo("sur", t)
+    for name in sorted(set(org_names)):
+        for t in _TOK_SPLIT.findall(name):
+            if t.isalpha() and t.lower() not in ORG_SUFFIXES:
+                _token_pseudo("org", t)
+
+
+_TOK_SPLIT = re.compile(r"([A-Za-zÀ-ÖØ-öø-ÿ]+|\d+)")
+
+
+def pseudo_person(original: str) -> str:
+    """Person name -> pseudonym, same length, token-consistent (see above)."""
+    parts = _TOK_SPLIT.split(original)
+    toks = [(i, p) for i, p in enumerate(parts) if i % 2 == 1]
+    alpha = [(i, p) for i, p in toks if p.isalpha()]
+    perm = _perm()
+    # "Surname, Given" ordering
+    comma_first = len(alpha) >= 2 and any("," in parts[j] for j in range(alpha[0][0] + 1, alpha[1][0]))
+    out = list(parts)
+    for n, (i, p) in enumerate(toks):
+        if p.isdigit():
+            out[i] = digits("id", "num:" + p, len(p))
+            continue
+        if len(p) == 1:
+            out[i] = perm.get(p.lower(), "x").upper()
+            continue
+        is_given = len(alpha) >= 2 and ((not comma_first and (i, p) == alpha[0]) or
+                                        (comma_first and (i, p) != alpha[0] and (i, p) == alpha[1]))
+        if is_given:
+            fl = perm.get(norm_key(p)[:1] or "x", "x")
+            out[i] = _case_like(p, _token_pseudo("given", p, fl))
+        else:
+            out[i] = _case_like(p, _token_pseudo("sur", p))
+    return "".join(out)
+
+
+def pseudo_org(original: str) -> str:
+    parts = _TOK_SPLIT.split(original)
+    out = list(parts)
+    for i in range(1, len(parts), 2):
+        p = parts[i]
+        if p.isdigit():
+            out[i] = digits("id", "num:" + p, len(p))
+        elif p.lower() in ORG_SUFFIXES:
+            out[i] = p
+        else:
+            out[i] = _case_like(p, _token_pseudo("org", p))
+    res = "".join(out)
+    if res.lower() == original.lower():
+        res = pseudo_text("id", norm_key(original), original)
+    return res
+
+
+# person index for logins / e-mail local parts: built by the registry
+PERSON_INDEX: dict = {}
+
+
+def pseudo_login(original: str) -> str | None:
+    """'chollick', 'hollickc', 'callum.hollick', 'callumh' -> composed from the
+    person's pseudonym pieces, if the login matches a known person."""
+    k = original.lower()
+    hit = PERSON_INDEX.get(re.sub(r"[^a-z]", "", k))
+    if not hit:
+        return None
+    given, sur, form = hit
+    g = _token_pseudo("given", given, _perm().get(given[0], "x")).lower()
+    s = _token_pseudo("sur", sur).lower()
+    pieces = {"is": g[0] + s, "si": s + g[0], "gs": g + s, "g.s": g + "." + s, "g_s": g + "_" + s,
+              "gi": g + s[0], "s": s, "g": g}[form]
+    letters_only = [c for c in pieces if c.isalpha()]
+    # keep the original's separators / digits / case layout
+    out, li = [], 0
+    for c in original:
+        if c.isalpha():
+            ch = letters_only[li] if li < len(letters_only) else "x"
+            out.append(ch.upper() if c.isupper() else ch)
+            li += 1
+        else:
+            out.append(c)
+    res = "".join(out)
+    return res if li == len(letters_only) else None
+
+
+_GIVEN = None
+
+
+def _given_names():
+    global _GIVEN
+    if _GIVEN is None:
+        try:
+            from .pii_detect import GIVEN
+            _GIVEN = GIVEN
+        except Exception:
+            _GIVEN = set()
+    return _GIVEN
+
+
+def pseudo_domain(original: str) -> str:
+    """Label by label, keeping www/com/edu/... (same rule as path renaming)."""
+    from .seeds import DOMAIN_KEEP
+    out = []
+    for lab in original.split("."):
+        if not lab or lab.lower() in DOMAIN_KEEP or lab.isdigit():
+            out.append(lab)
+        else:
+            out.append(pseudo_text("id", norm_key(lab), lab))
+    return ".".join(out)
+
+
+def pseudo_email(original: str) -> str:
+    if "@" not in original:
+        return pseudo_text("id", norm_key(original), original)
+    local, dom = original.split("@", 1)
+    lp = pseudo_login(local) or pseudo_text("id", norm_key(local), local)
+    return lp + "@" + pseudo_domain(dom)
+
+
+JOINED: dict = {}   # "4dsystems" -> ("org", "4D Systems"): joined forms of multi-word names
+
+
+def _joined(original: str):
+    """'4DSystems' / 'MITMediaLab' / 'paulorkwis' written without separators:
+    the pseudonym of the spaced name with its separators removed, in the
+    original's case layout, so both spellings stay one identity."""
+    hit = JOINED.get(original.lower())
+    if not hit:
+        return None
+    k2, disp = hit
+    full = pseudo_org(disp) if k2 == "org" else pseudo_person(disp)
+    chars = [c for c in full if c.isalnum()]
+    if len(chars) != len(original):
+        return None
+    if original.islower():
+        return "".join(chars).lower()
+    if original.isupper():
+        return "".join(chars).upper()
+    return "".join(chars)
+
+
+def pseudo_entity(kind: str, key: str, original: str) -> str:
+    """Kind-aware, same-length pseudonym (see the notes above)."""
+    if original.isalnum() and kind in ("person", "org", "account", "project", "id"):
+        j = _joined(original)
+        if j:
+            return j
+    if kind == "person":
+        if original.isalpha():
+            joined = pseudo_login(original)      # "PaulOrkwis" -> pieces of "Paul Orkwis"
+            if joined:
+                return joined
+        if " " not in original.strip() and "." not in original and "," not in original \
+                and original.lower() in _given_names():
+            fl = _perm().get(original[0].lower(), "x")
+            return _case_like(original, _token_pseudo("given", original, fl))
+        return pseudo_person(original)
+    if kind == "org":
+        return pseudo_org(original)
+    if kind == "domain":
+        return pseudo_domain(original)
+    if kind == "email":
+        return pseudo_email(original)
+    if kind in ("account",):
+        return pseudo_login(original) or pseudo_text(kind, key, original)
+    return pseudo_text(kind, key, original)
+
+
+def pseudo_entity_bytes(kind: str, key: str, original: bytes, encoding: str) -> bytes:
+    if kind not in ("person", "org", "domain", "email", "account"):
+        return pseudo_bytes(kind, key, original, encoding)
+    try:
+        txt = original.decode(encoding)
+    except UnicodeDecodeError:
+        return pseudo_bytes(kind, key, original, encoding)
+    new = pseudo_entity(kind, key, txt)
+    out = new.encode(encoding, "replace")
+    if len(out) != len(original):
+        # non-ASCII letters (2 bytes in UTF-8) -> keep the canonical
+        # pseudonym and pad it to the original byte length
+        unit = 2 if encoding.lower().startswith("utf-16") else 1
+        filler = letters("id", key, 64)
+        while len(out) < len(original):
+            out += filler[(len(out) // unit) % 64].encode(encoding)
+        out = out[: len(original)]
+    return out

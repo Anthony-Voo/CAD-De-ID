@@ -122,17 +122,66 @@ def local_registry(reg: Registry, where: str, data: bytes):
         # values from this file's own identity fields: replaced everywhere in
         # the file; short ones (3-4 chars) in binary data only as UTF-16 text
         # (OLE / SolidWorks save history), where random bytes practically never match
-        if (k, nk) not in reg.ids or not reg.ids[(k, nk)].ctx or len(v) < 5:
+        g = reg.ids.get((k, nk))
+        known_form = g is not None and g.ctx and v.lower() in {x.lower() for x in g.variants}
+        # a new surface form of a known identity ('E. Pallarés' of the login
+        # 'epallares') is added too: same key, so the same pseudonym
+        if not known_form or len(v) < 5:
             ident = loc.add(k, v, ctx=("path", "text", "bin"))
             if ident is not None and len(v) < 5:
                 ident.u16short = True
+            if ident is not None and k == "person":
+                from .registry import add_person_forms
+                add_person_forms(ident)
     return loc, found
 
 
 _FIELD_SPLIT = re.compile(r"(\s*[\\();,/&|]\s*|\s+and\s+|\s+-\s+)")
 
 
-def rw_field_value(v: str) -> str:
+_LOGIN_FIELD = re.compile(r"^([A-Za-z0-9_\-]+)\\([^\s()\\]+)(\s*\()?([^)]*)(\)?)\s*$")
+
+
+def rw_field_value(v: str, kind: str = "person") -> str:
+    """Identity field -> pseudonym, entity-consistent:
+      'DOMAIN\\user (HOST)'  domain/host as names, user as a login (resolved
+                              to the matching person when known)
+      company fields         organization rules (legal suffixes kept)
+      otherwise              each listed name with the person rules."""
+    from .pseudo import pseudo_entity
+    m = _LOGIN_FIELD.match(v)
+    if m:
+        dom, user, op, host, cl = m.groups()
+        res = pseudo_entity("account", norm_key(dom), dom) if not is_placeholder(dom) else dom
+        if user.isdigit() and len(user) >= 4:
+            res += "\\" + pseudo_text("id", "num:" + user, user)
+        else:
+            res += "\\" + (pseudo_entity("account", norm_key(user), user) if not is_placeholder(user) else user)
+        if op:
+            res += op + (pseudo_entity("account", norm_key(host), host) if host and not is_placeholder(host) else host) + (cl or "")
+        return res if len(res) == len(v) else _rw_field_value_old(v)
+    out = []
+    for i, part in enumerate(_FIELD_SPLIT.split(v)):
+        if i % 2 == 1 or not part.strip():
+            out.append(part)
+            continue
+        lead = part[: len(part) - len(part.lstrip())]
+        core = part.strip()
+        trail = part[len(lead) + len(core):]
+        if core.lower().startswith("and "):
+            lead += core[:4]
+            core = core[4:]
+        if core and not is_placeholder(clean(core)) and any(c.isalpha() for c in core):
+            k = "org" if kind == "org" else ("person" if kind == "person" else "account")
+            core = pseudo_entity(k, norm_key(core), core)
+        elif core.isdigit() and len(core) >= 4:
+            core = pseudo_text("id", "num:" + core, core)
+        out.append(lead + core + trail)
+    res = "".join(out)
+    return res if len(res) == len(v) else _rw_field_value_old(v)
+
+
+def _rw_field_value_old(v: str) -> str:
     """Pseudonymize an identity field component by component, so that
     'WAVELENGTH\\sbarnum (WAVELENGTH)', 'sbarnum' and 'SBARNUM' all use the
     pseudonym of the same identity keys (same length, case pattern kept)."""
@@ -157,12 +206,12 @@ def rw_field_value(v: str) -> str:
     return "".join(out)
 
 
-def rw_field_bytes(span: bytes, enc: str) -> bytes:
+def rw_field_bytes(span: bytes, enc: str, kind: str = "person") -> bytes:
     try:
         v = span.decode(enc)
     except UnicodeDecodeError:
         return span
-    nv = rw_field_value(v)
+    nv = rw_field_value(v, kind)
     nb = nv.encode(enc, "replace")
     if len(nb) != len(span):
         return pseudo_bytes("id", norm_key(v), span, enc)
@@ -205,7 +254,7 @@ def rw_ole(data: bytes, reg: Registry, where: str, notes: list):
                 kind = formats.ole_field_kind(d)
                 span = raw[d["start"]:d["end"]]
                 if kind and d["value"].strip() and not is_placeholder(clean(d["value"])):
-                    nb[d["start"]:d["end"]] = rw_field_bytes(span, d["enc"])
+                    nb[d["start"]:d["end"]] = rw_field_bytes(span, d["enc"], kind)
                 else:
                     nb[d["start"]:d["end"]] = reg.replace(span, "text")[0]
             new = bytes(nb)
@@ -312,7 +361,7 @@ def rw_pdf(data: bytes, reg: Registry, where: str, notes: list):
             except Exception:
                 continue
             if key in ("/Author", "/Company", "/Manager", "/LastModifiedBy") and v.strip() and not is_placeholder(clean(v)):
-                di[key] = pikepdf.String(rw_field_value(v))
+                di[key] = pikepdf.String(rw_field_value(v, "org" if key == "/Company" else "person"))
             elif key not in ("/CreationDate", "/ModDate", "/Trapped"):
                 nv = reg.replace(v.encode("utf-8"), "text")[0].decode("utf-8", "replace")
                 if nv != v:
