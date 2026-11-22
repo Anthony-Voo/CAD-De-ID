@@ -82,7 +82,7 @@ def add_person_forms(ident, common=None, index=None):
     else:
         return
     # only real-looking names get derived forms: junk "persons" such as
-    # "ASME Downloaded From" or "Schaffner Group The" would otherwise yield
+    # "Journal Downloaded From" or "Widget Group The" would otherwise yield
     # "From A" / "The S" and rewrite ordinary prose everywhere
     try:
         from wordfreq import zipf_frequency
@@ -209,7 +209,7 @@ class Registry:
                             idx.setdefault(login, (g_, s_, form))
                 else:
                     m1 = re.fullmatch(r"([A-Za-z])\.?\s?([A-Za-z]{4,})", disp.strip())
-                    if m1:  # 'D. Bridges' -> login 'dbridges' / 'bridgesd'
+                    if m1:  # 'D. Smith' -> login 'dsmith' / 'smithd'
                         g_, s_ = m1.group(1).lower(), m1.group(2).lower()
                         idx.setdefault(g_ + s_, (g_, s_, "is"))
                         idx.setdefault(s_ + g_, (g_, s_, "si"))
@@ -314,9 +314,9 @@ class Registry:
 
     def _add_person_forms(self, idx):
         """Every surface form of a known person is a variant of the same
-        identity: initials ('C. Hollick', 'C.Hollick', 'Hollick C',
-        'HOLLICK, C.'), the surname alone when distinctive, and the login
-        forms built from the name ('chollick', 'hollickc', 'callumh')."""
+        identity: initials ('B. Sample', 'B.Sample', 'Sample B',
+        'SAMPLE, B.'), the surname alone when distinctive, and the login
+        forms built from the name ('bsample', 'sampleb', 'beas')."""
         try:
             from wordfreq import zipf_frequency
         except ImportError:

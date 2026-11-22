@@ -3,7 +3,7 @@
 The pseudonym of an identity depends only on (kind, normalized key) and on the
 character classes of the text being replaced.  Letters map to letters (case of
 the original kept), digits to digits, every other character is kept.  So
-"Tom Kramer", "Tom_Kramer", "TomKramer" and "TOM KRAMER" all map to the same
+"Ann Example", "Ann_Example", "AnnExample" and "ANN EXAMPLE" all map to the same
 letter sequence, and a pseudonym always has the same length as the original,
 which lets us rewrite binary formats in place without moving any offsets.
 """
@@ -72,7 +72,7 @@ def digits(kind: str, key: str, n: int) -> str:
 def pseudo_text(kind: str, key: str, original: str) -> str:
     """Pseudonym with exactly len(original) characters, same char classes.
 
-    The kind is ignored on purpose: one key (e.g. "bcn3d") must get one
+    The kind is ignored on purpose: one key (e.g. "acme3d") must get one
     pseudonym whether it was seen as an account, an org or a project."""
     kind = "id"
     key = TEXT_SALT.get(key, key)
@@ -84,7 +84,7 @@ def pseudo_text(kind: str, key: str, original: str) -> str:
     li = di = 0
     # canonical capitalization: first letter of every letter run upper case,
     # the rest lower case, whatever the case of this occurrence, so
-    # "SBARNUM", "sbarnum" and "Sbarnum" all become the same string
+    # "JDOE", "jdoe" and "Jdoe" all become the same string
     prev_alpha = False
     for c in original:
         if c.isalpha():
@@ -171,8 +171,8 @@ def pseudo_bytes(kind: str, key: str, original: bytes, encoding: str) -> bytes:
 # Person names are pseudonymized token by token so every surface form of the
 # same person agrees: a surname always maps to the same word, a given name's
 # pseudonym always starts with PERM[its initial], and an initial maps to
-# PERM[initial].  "Callum Hollick", "C. Hollick", "C.Hollick", "HOLLICK, C."
-# and "hollick" therefore all use the same pseudonym pieces.  Organizations
+# PERM[initial].  "Bea Sample", "B. Sample", "B.Sample", "SAMPLE, B."
+# and "sample" therefore all use the same pseudonym pieces.  Organizations
 # are pseudonymized word by word with legal suffixes kept, so "X Corporation",
 # "X Corp." and "X Inc." share the base pseudonym.
 
@@ -308,7 +308,7 @@ PERSON_INDEX: dict = {}
 
 
 def pseudo_login(original: str) -> str | None:
-    """'chollick', 'hollickc', 'callum.hollick', 'callumh' -> composed from the
+    """'bsample', 'sampleb', 'bea.sample', 'beas' -> composed from the
     person's pseudonym pieces, if the login matches a known person."""
     k = original.lower()
     hit = PERSON_INDEX.get(re.sub(r"[^a-z]", "", k))
@@ -374,11 +374,11 @@ def pseudo_email(original: str) -> str:
 
 TEXT_SALT: dict = {}  # key -> salted key, set where the plain hash collides
 KIND_OF: dict = {}  # normalized key -> the one kind its pseudonym is built with
-JOINED: dict = {}   # "4dsystems" -> ("org", "4D Systems"): joined forms of multi-word names
+JOINED: dict = {}   # "3dwidgets" -> ("org", "3D Widgets"): joined forms of multi-word names
 
 
 def _joined(original: str):
-    """'4DSystems' / 'MITMediaLab' / 'paulorkwis' written without separators:
+    """'3DWidgets' / 'AcmeMediaLab' / 'carlroe' written without separators:
     the pseudonym of the spaced name with its separators removed, in the
     original's case layout, so both spellings stay one identity."""
     hit = JOINED.get(original.lower())
@@ -397,7 +397,7 @@ def _joined(original: str):
 
 
 def _fold(s: str) -> str:
-    """'Průša' -> 'Prusa' (one output character per input character)."""
+    """'Núñez' -> 'Nunez' (one output character per input character)."""
     out = []
     for c in s:
         if c.isascii():
@@ -437,7 +437,7 @@ _NO_CANON = {"domain", "email", "phone", "num", "literal"}
 def _pseudo_entity_kind(kind: str, key: str, original: str) -> str:
     if kind == "person":
         if original.isalpha():
-            joined = pseudo_login(original)      # "PaulOrkwis" -> pieces of "Paul Orkwis"
+            joined = pseudo_login(original)      # "CarlRoe" -> pieces of "Carl Roe"
             if joined:
                 return joined
         if " " not in original.strip() and "." not in original and "," not in original \

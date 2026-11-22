@@ -4,7 +4,7 @@ call, normalized original identity -> normalized pseudonym.
   python3 -m deid.trace_consistency --rows rows.tsv --input DIR --registry registry.json [--pdf-only]
 
 Reports identities that became 2+ different pseudonyms (separators and case
-ignored: 'D. Bridges' -> 'B. Uemeneg' and 'dbridges' -> 'buemeneg' are one
+ignored: 'D. Smith' -> 'X. Yyyyy' and 'dsmith' -> 'xyyyyy' are one
 pseudonym) and pseudonyms produced for 2+ different identities."""
 from __future__ import annotations
 

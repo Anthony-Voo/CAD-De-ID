@@ -128,8 +128,8 @@ def local_registry(reg: Registry, where: str, data: bytes):
         # (OLE / SolidWorks save history), where random bytes practically never match
         g = reg.ids.get((k, nk))
         known_form = g is not None and g.ctx and v.lower() in {x.lower() for x in g.variants}
-        # a new surface form of a known identity ('E. Pallarés' of the login
-        # 'epallares') is added too: same key, so the same pseudonym
+        # a new surface form of a known identity ('E. Pérez' of the login
+        # 'eperez') is added too: same key, so the same pseudonym
         if not known_form or len(v) < 5:
             ident = loc.add(k, v, ctx=("path", "text", "bin"))
             if ident is not None and len(v) < 5:
@@ -187,7 +187,7 @@ def rw_field_value(v: str, kind: str = "person") -> str:
 
 def _rw_field_value_old(v: str) -> str:
     """Pseudonymize an identity field component by component, so that
-    'WAVELENGTH\\sbarnum (WAVELENGTH)', 'sbarnum' and 'SBARNUM' all use the
+    'ACMECORP\\jdoe (ACMECORP)', 'jdoe' and 'JDOE' all use the
     pseudonym of the same identity keys (same length, case pattern kept)."""
     parts = _FIELD_SPLIT.split(v)
     out = []
@@ -538,7 +538,7 @@ def _rw_utf16be(b: bytes, reg: Registry) -> bytes:
 
 def _rw_content(raw: bytes, reg: Registry) -> bytes:
     """Replace identifiers inside PDF content-stream string literals.  Also
-    handles text split by kerning arrays: [(Tom) -20 (Kramer)] is joined for
+    handles text split by kerning arrays: [(Ann) -20 (Example)] is joined for
     matching and the replacement is redistributed over the same pieces."""
     if b"(" not in raw and b"<" not in raw:
         return reg.replace(raw, "text")[0]
