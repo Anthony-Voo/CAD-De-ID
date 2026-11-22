@@ -48,21 +48,41 @@ Steps (all in code/deid/):
                        organizations, people, project names and project codes.
   3. run.py/rewrite.py rewrites paths and contents (below).
 
-PSEUDONYMS
-----------
-* One identity -> one pseudonym everywhere (paths, text, metadata, binary
-  streams, archive members).  Pseudonyms are derived from a keyed hash of the
-  normalized identity, so "Ann Example", "Ann_Example", "ANN EXAMPLE" and
-  "annexample" all become the same pronounceable fake name with the same
-  separators and capitalization.  Different identities get different names.
+PSEUDONYMS (ENTITY RESOLUTION)
+------------------------------
+* One canonical identity registry: every variant of an identity is reduced
+  to one normalized key (case, punctuation, spacing, accents, joined
+  spellings: "Ann Example", "ANN_EXAMPLE", "Example, A.", "AnnExample" and
+  "annexample" are one key), and each key gets exactly one pseudonym,
+  used in paths, text, metadata, binary streams and archive members.
+* People: the surname maps to one fake surname and the given name to a
+  fake given name with a fixed (keyed) first-letter substitution, so the
+  full name, the initial form ("A. Example", "Example A"), the surname
+  alone and logins built from the name ("aexample", "examplea",
+  "annexample") all stay the same person.  DOMAIN\\login fields use the
+  same login pseudonym.
+* Organizations: word by word, legal suffixes kept ("Acme Tools, Inc." ->
+  "Xxxx Yyyyy, Inc."), so "Acme Tools" and "Acme Tools Inc." stay linked.
+* Domains: label by label (www/com/edu/... kept); e-mail = login + "@" +
+  domain pseudonym, so an address stays linked to its person and company.
+* One kind per key: a string seen as an author field, an organization and
+  a web domain label gets the same pseudonym in all three places.
+* Distinct identities stay distinct: the registry is checked in a fixed
+  order at load time and any key whose pseudonym (case and separators
+  ignored) equals another key's pseudonym or an original identity is
+  re-keyed, deterministically, so every worker makes the same choice.
+* Pseudonyms are an HMAC of the normalized key under DEID_SECRET, so a run
+  is repeatable; a different secret gives an unlinkable mapping.
 * A pseudonym has exactly the length of the original (letters->letters,
-  digits->digits, punctuation kept).  This is what keeps binary CAD files
-  valid: no offset, record length, fixed IGES column or stream size moves.
+  digits->digits, punctuation kept); in UTF-8 an accented letter in the
+  original is matched by an accented letter in the pseudonym, so byte
+  lengths are kept.  This is what keeps binary CAD files valid: no offset,
+  record length, fixed IGES column or stream size moves.
 * Identity fields are never blanked: author/organization/company/designer
   fields keep a (pseudonymous) value.
-* Everyday words used as an author name are pseudonymized inside the
-  identity field where they were found, but not replaced as free text
-  elsewhere, so engineering words, materials and units stay intact.
+* Everyday words used as an author name ("Support", "The Author") are
+  pseudonymized inside the identity field where they were found, but not
+  replaced as free text elsewhere, so engineering words stay intact.
 
 WHAT IS REWRITTEN
 -----------------
@@ -108,6 +128,18 @@ LIMITATIONS
 * Very short identifiers (under 5 characters) are not replaced inside raw
   binary data, to avoid corrupting geometry; they are replaced in text,
   metadata fields and names.
+* Names of CAD/office software vendors (Autodesk, Dassault/SolidWorks,
+  PTC, Siemens, Adobe, ...) are kept: they name the tool that wrote the
+  file, not a person or organization in the data.
+* Names in scripts other than Latin (e.g. CJK) are replaced, but in UTF-8
+  data the pseudonym is padded to the original byte length.
+* PDF page text is matched through each font's encoding; text drawn as
+  vector outlines or images, and fonts with no character mapping at all,
+  cannot be read and is not changed.
+* Identities are found by the discovery pass plus per-file detection
+  (title blocks, author/company fields, "Initial. Surname" and
+  "Given Surname" patterns, organizations with legal suffixes); a name
+  that matches none of these in a file is not detected.
 """
 
 
